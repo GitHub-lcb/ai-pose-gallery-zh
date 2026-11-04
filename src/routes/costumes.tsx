@@ -36,6 +36,7 @@ function CostumesPage() {
   const { data: costumes } = useSuspenseQuery(costumesQuery)
   const { recipe, toggleCostume, safeMode, requestUnlockNsfw } = useStudio()
 
+  const [version, setVersion] = useState<'all' | '真人' | '二次元'>('all')
   const [category, setCategory] = useState('')
   const [tag, setTag] = useState('all')
   const [query, setQuery] = useState('')
@@ -44,11 +45,23 @@ function CostumesPage() {
 
   const activeCategory = safeMode && category && isNsfwCostumeCategory(category) ? '' : category
 
-  const baseCostumes = useMemo(
-    () => (safeMode ? costumes.filter((x) => !isNsfwCostume(x)) : costumes),
-    [costumes, safeMode]
+  const versionCounts = useMemo(() => {
+    const counts = { 真人: 0, 二次元: 0 }
+    for (const item of costumes) counts[item.版本 === '二次元' ? '二次元' : '真人'] += 1
+    return counts
+  }, [costumes])
+
+  // 图库版本筛选：真人写实 / 二次元动漫（全部时混合展示）
+  const versionCostumes = useMemo(
+    () => (version === 'all' ? costumes : costumes.filter((x) => (x.版本 ?? '真人') === version)),
+    [costumes, version]
   )
-  const hiddenNsfwCount = costumes.length - baseCostumes.length
+
+  const baseCostumes = useMemo(
+    () => (safeMode ? versionCostumes.filter((x) => !isNsfwCostume(x)) : versionCostumes),
+    [versionCostumes, safeMode]
+  )
+  const hiddenNsfwCount = versionCostumes.length - baseCostumes.length
 
   const categories = useMemo(
     () => [...new Set(baseCostumes.map((x) => x.分类))],
@@ -88,7 +101,39 @@ function CostumesPage() {
 
   return (
     <>
-      <PageHeader title="服装穿搭库" />
+      <PageHeader title="服装穿搭库" description="真人写实 + 二次元动漫双版本 · 8 大分类 · 按颜色 / 材质 / 单品检索" />
+
+      {/* 图库版本切换：真人写实 / 二次元动漫 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="shrink-0 text-xs font-medium text-muted-foreground">图库版本</span>
+        {(
+          [
+            { value: 'all', label: '全部版本', count: costumes.length },
+            { value: '真人', label: '真人写实', count: versionCounts.真人 },
+            { value: '二次元', label: '二次元动漫', count: versionCounts.二次元 },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            onClick={() => {
+              setVersion(tab.value)
+              setCategory('')
+              setTag('all')
+              setShown(60)
+              setViewerIndex(null)
+            }}
+            className={cn(
+              'shrink-0 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
+              version === tab.value
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-border bg-background text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {tab.label} ({tab.count.toLocaleString('zh-CN')})
+          </button>
+        ))}
+      </div>
 
       {/* 分类筛选药丸 */}
       <div className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:pb-0">
@@ -107,7 +152,7 @@ function CostumesPage() {
           全部穿搭 ({baseCostumes.length})
         </button>
         {categories.map((c) => {
-          const cnt = costumes.filter((x) => x.分类 === c).length
+          const cnt = versionCostumes.filter((x) => x.分类 === c).length
           const isNsfw = isNsfwCostumeCategory(c)
           return (
             <button
@@ -238,6 +283,15 @@ function CostumesPage() {
                     {picked ? <CheckIcon className="size-3" /> : <PlusIcon className="size-3" />}
                     {picked ? '已选' : '加入配方'}
                   </button>
+                  <span
+                    className={cn(
+                      'absolute right-2 bottom-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold',
+                      item.版本 === '二次元' ? 'bg-violet-600/90 text-white' : 'bg-black/60 text-white/90'
+                    )}
+                    title={item.版本 === '二次元' ? '二次元动漫服装' : '真人写实服装'}
+                  >
+                    {item.版本 === '二次元' ? '二次元' : '真人'}
+                  </span>
                 </div>
 
                 <div className="flex flex-1 flex-col justify-between px-1.5 pt-2.5 pb-1">
@@ -304,6 +358,9 @@ function CostumesPage() {
                       <div className="flex items-center gap-2">
                         <Badge>{currentItem.分类}</Badge>
                         <Badge variant="outline">{currentItem.id}</Badge>
+                        <Badge variant={currentItem.版本 === '二次元' ? 'secondary' : 'outline'}>
+                          {currentItem.版本 === '二次元' ? '二次元动漫' : '真人写实'}
+                        </Badge>
                       </div>
                       <DialogTitle className="mt-2 text-base leading-snug">{currentItem.服装名称}</DialogTitle>
                     </DialogHeader>

@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { detectComfyUi, PROVIDER_META, testComfyConnection } from '@/services/aiGenerator'
+import { comfyCandidateUrls, detectComfyUi, PROVIDER_META, testComfyConnection } from '@/services/aiGenerator'
 import { useStudio } from '@/store/studioStore'
 import type { ImagePassMode, ImageProviderId } from '@/types/gallery'
 
@@ -54,9 +54,10 @@ function SettingsPage() {
     try {
       const found = await detectComfyUi(pCfg.baseUrl, pCfg.apiKey)
       if (!found) {
-        toast.error('未找到可用的 ComfyUI（已尝试当前地址、127.0.0.1:8000、127.0.0.1:8188），请确认已启动并检查跨域设置', {
-          duration: 10000,
-        })
+        toast.error(
+          `未找到可用的 ComfyUI（已尝试：${comfyCandidateUrls(pCfg.baseUrl).join('、')}）。请确认已启动；若端口不同，可在上方地址栏填写正确地址`,
+          { duration: 10000 }
+        )
         return
       }
       updateProviderConfig('comfyui', { baseUrl: found.baseUrl })
@@ -156,7 +157,7 @@ function SettingsPage() {
           label={pid === 'comfyui' ? 'ComfyUI 地址 (Base URL)' : 'Base URL'}
           hint={
             pid === 'comfyui'
-              ? `本地运行本站时填 /comfy（同源代理，无需改跨域设置）；直连时 ComfyUI 需加启动参数 --enable-cors-header "${typeof window !== 'undefined' ? window.location.origin : '*'}"。Desktop 版默认端口 8000，便携版 8188`
+              ? `本地运行本站时填 /comfy（同源代理，pnpm dev 会自动探测本机 ComfyUI 端口，默认 8188，兼容 8000/8088/8189）；直连时 ComfyUI 需加启动参数 --enable-cors-header "${typeof window !== 'undefined' ? window.location.origin : '*'}"`
               : undefined
           }
         >

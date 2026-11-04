@@ -31,6 +31,15 @@ if os.path.exists(costume_path):
             checks.append((os.path.join(ROOT, "thumbs", "costume", f"{cid}.webp"), WEBP, "thumbs"))
             checks.append((os.path.join(ROOT, "img", "costume", f"{cid}.webp"), WEBP, "img"))
 
+# 2b. Costume Anime（二次元动漫服装）
+costume_anime_path = os.path.join(ROOT, "data", "costume-anime.json")
+if os.path.exists(costume_anime_path):
+    with open(costume_anime_path, encoding="utf-8") as f:
+        for item in json.load(f):
+            cid = item["id"]
+            checks.append((os.path.join(ROOT, "thumbs", "costume-anime", f"{cid}.webp"), WEBP, "thumbs"))
+            checks.append((os.path.join(ROOT, "img", "costume-anime", f"{cid}.webp"), WEBP, "img"))
+
 # 3. Portrait
 portrait_path = os.path.join(ROOT, "data", "portrait.json")
 if os.path.exists(portrait_path):

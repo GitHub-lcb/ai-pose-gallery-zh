@@ -29,6 +29,8 @@ import { type ChangeEvent, type DragEvent, useEffect, useMemo, useRef, useState 
 import { toast } from 'sonner'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
 import { Field, Section } from '@/components/common/FormSection'
+import { AutoGenPanel } from '@/components/studio/AutoGenPanel'
+import { SaveLocationBar } from '@/components/studio/SaveLocationBar'
 import { WorkflowParameters } from '@/components/studio/WorkflowParameters'
 import { applyWorkflowOverrides, validateReferenceCombinations, workflowIdentity } from '@/lib/comfyWorkflowParameters'
 import { PageHeader } from '@/components/common/PageHeader'
@@ -45,6 +47,7 @@ import {
   type ComfyCheckResult,
   type ComfyPresetId,
   checkComfyWorkflow,
+  comfyCandidateUrls,
   COMFYUI_WORKFLOW_TEMPLATES,
   detectComfyUi,
   fileToDataUrl,
@@ -57,6 +60,7 @@ import {
 import { poseImagePath, poseThumbPath, referenceImageUrl, uploadedReferences } from '@/lib/recipeImages'
 import { useStudio } from '@/store/studioStore'
 import type {
+  AdultGenMode,
   ComfyUiParams,
   DoubaoParams,
   GeminiParams,
@@ -64,6 +68,7 @@ import type {
   ImagePassMode,
   ImageProviderId,
   QwenParams,
+  RandomCostumeVersion,
 } from '@/types/gallery'
 
 export const Route = createFileRoute('/studio')({
@@ -104,6 +109,10 @@ function StudioPage() {
     randomizeRecipe,
     removeHistoryItem,
     clearHistory,
+    adultGenMode,
+    requestAdultGenMode,
+    randomCostumeVersion,
+    setRandomCostumeVersion,
   } = useStudio()
   const qc = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -162,7 +171,7 @@ function StudioPage() {
         setComfyCheck({
           ok: false,
           errors: [
-            `未找到可用的 ComfyUI 服务（已尝试：${cfg.baseUrl || '默认地址'}、127.0.0.1:8000、127.0.0.1:8188）。请确认 ComfyUI 已启动，并检查跨域 (CORS) 设置。`,
+            `未找到可用的 ComfyUI 服务（已尝试：${comfyCandidateUrls(cfg.baseUrl).join('、')}）。请确认 ComfyUI 已启动；本地开发请先启动 ComfyUI 再运行 pnpm dev（会自动探测端口），或在接口配置里手动填写地址。`,
           ],
           warnings: [],
           fixes: [],
@@ -513,7 +522,14 @@ function StudioPage() {
                     </button>
                     <div className="flex min-h-12 min-w-0 flex-1 flex-col justify-between gap-1">
                       <div className="flex items-center justify-between gap-1">
-                        <span className="shrink-0 text-[11px] text-muted-foreground">服装</span>
+                        <div className="flex min-w-0 items-center gap-1">
+                          <span className="shrink-0 text-[11px] text-muted-foreground">服装</span>
+                          {recipe.costume.版本 === '二次元' && (
+                            <span className="shrink-0 rounded bg-violet-600/10 px-1 py-0.5 text-[9px] font-medium text-violet-600 dark:text-violet-400">
+                              动漫 · 自动转译
+                            </span>
+                          )}
+                        </div>
                         <button
                           type="button"
                           aria-label="清除服装参考图"
@@ -635,6 +651,67 @@ function StudioPage() {
                   </>
                 )}
               </div>
+            </div>
+
+            {/* 生图成人模式（仅影响随机配方 / 定时任务的素材池，需 18+ 年龄确认） */}
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-background p-2.5">
+              <div className="flex min-w-0 items-start gap-2">
+                <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-rose-500/10 text-[11px] font-bold text-rose-600 dark:text-rose-400">
+                  18+
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold">生图成人模式</div>
+                  <div className="text-[11px] leading-snug text-muted-foreground">
+                    {adultGenMode === 'off'
+                      ? '随机配方仅使用 SFW 素材；开启需通过 18+ 年龄确认'
+                      : adultGenMode === 'mixed'
+                        ? '随机配方会混合 18+ 素材（性感姿势 / 内衣・睡衣 / 性感穿搭）'
+                        : '随机配方仅从 18+ 分类抽取素材'}
+                  </div>
+                </div>
+              </div>
+              <Select value={adultGenMode} onValueChange={(value) => requestAdultGenMode(value as AdultGenMode)}>
+                <SelectTrigger className="h-8 w-[136px] shrink-0 bg-background text-xs" aria-label="生图成人模式">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="off">关闭（仅 SFW）</SelectItem>
+                  <SelectItem value="mixed">混合 18+</SelectItem>
+                  <SelectItem value="only">仅 18+ 素材</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* 随机配方 · 服装版本：避免真人脸和动漫服装随机混搭出怪图 */}
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-background p-2.5">
+              <div className="flex min-w-0 items-start gap-2">
+                <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400">
+                  <ShirtIcon className="size-3.5" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold">随机配方 · 服装版本</div>
+                  <div className="text-[11px] leading-snug text-muted-foreground">
+                    {randomCostumeVersion === 'all'
+                      ? '随机 / 定时任务会同时抽真人写实与二次元动漫服装（动漫服装自动转译）'
+                      : randomCostumeVersion === '真人'
+                        ? '随机 / 定时任务只抽真人写实服装，避免与真人脸混搭出错'
+                        : '随机 / 定时任务只抽二次元动漫服装（建议搭配二次元 / 2.5D 画风）'}
+                  </div>
+                </div>
+              </div>
+              <Select
+                value={randomCostumeVersion}
+                onValueChange={(value) => setRandomCostumeVersion(value as RandomCostumeVersion)}
+              >
+                <SelectTrigger className="h-8 w-[136px] shrink-0 bg-background text-xs" aria-label="随机配方服装版本">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部版本</SelectItem>
+                  <SelectItem value="真人">仅真人写实</SelectItem>
+                  <SelectItem value="二次元">仅二次元动漫</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             {/* 附加参考图列表 + 可视化拖拽/粘贴上传框 */}
@@ -1407,8 +1484,8 @@ function StudioPage() {
           </Section>
         </div>
 
-        {/* 右栏：专注展示 AI 生成结果与生成状态 */}
-        <div className="min-w-0 lg:col-span-5">
+        {/* 右栏：专注展示 AI 生成结果、定时任务与生成状态 */}
+        <div className="flex min-w-0 flex-col gap-4 lg:col-span-5">
           <Section
             title="生成结果"
             className="@lg/section:grid-cols-1"
@@ -1482,7 +1559,12 @@ function StudioPage() {
                 </div>
               )}
             </div>
+
+            <SaveLocationBar />
           </Section>
+
+          {/* 定时任务：持续随机出图，可随时停止 */}
+          <AutoGenPanel />
         </div>
       </div>
 

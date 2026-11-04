@@ -83,7 +83,7 @@ export const PROVIDER_META: Record<
     id: 'comfyui',
     name: '本地 ComfyUI',
     shortName: 'ComfyUI',
-    // 本地开发时走 /comfy 同源代理；线上站点直连 ComfyUI Desktop 默认端口 8000
+    // 本地开发时走 /comfy 同源代理（由 vite.config.ts 自动探测端口）；线上站点直连本机 ComfyUI（默认 8188）
     defaultBaseUrl: defaultComfyBaseUrl(),
     docUrl: 'https://docs.comfy.org/essentials/comfyui_server',
     models: [
@@ -148,6 +148,18 @@ export const STYLE_PRESETS: Record<string, { label: string; prompt: string }> = 
 // 用自然语言逐项描述（人物 / 服装 / 姿势），实测比堆砌要点更能让多图编辑模型还原服装、避免照搬人体模型线条
 const PHOTO_STYLES = new Set(['realistic', 'fashion', 'film'])
 
+// 3D 素体姿势图自带「大头/长腿」的夸张人偶比例，若不显式约束，成图会照搬导致身材比例失真
+// 注意：实测生成结果最典型的问题是「头大身小 / 幼态比例」，因此强化头身比与头部大小的约束
+const PROPORTION_FULLBODY_PHOTO =
+  '• 人体比例（重要）：成年女性真实自然的全身比例（约 7~7.5 头身），头部不要偏大，头部大小与肩宽、胸腔、腰胯、四肢长度协调；避免大头小身、幼态娃娃比例、躯干过短或四肢过细；头顶与双脚均完整入镜、不被裁切，站姿与关节自然。'
+const PROPORTION_FULLBODY_STYLIZED =
+  '• 人体比例（重要）：成年角色自然比例（约 7~7.5 头身），头部不要偏大，避免大头小身 / 幼态比例，头部与躯干、四肢长度协调；按该画风的标准人物比例绘制，头顶与双脚完整入镜。'
+// 默认身材偏好：成年女性成熟身形、胸部略丰满（不夸张、不低俗），按用户偏好默认启用
+const FIGURE_PREFERENCE_PHOTO =
+  '• 身材（默认偏好）：成年女性成熟匀称的身材，肩颈与腰胯曲线自然，胸部较丰满但不夸张、与服装版型自然贴合；不要幼态、过度瘦弱或比例失调的身材。'
+const FIGURE_PREFERENCE_STYLIZED =
+  '• 身材（默认偏好）：成年女性成熟匀称的身材，曲线自然，胸部较丰满但不夸张（符合该画风审美）；不要幼态、过度瘦弱或比例失调的身材。'
+
 export function buildRecipePrompt(recipe: RecipeState, stylePreset = 'realistic', workflowImages: ExtraReferenceImage[] = []): string {
   const styleInfo = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.realistic
   const isPhoto = PHOTO_STYLES.has(stylePreset)
@@ -182,6 +194,14 @@ export function buildRecipePrompt(recipe: RecipeState, stylePreset = 'realistic'
         ? `• 服装：让人物穿上图${idx}中展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
         : `• 服装：让人物穿上图${idx}中展示的整套服装和配饰（参考名称：${recipe.costume.服装名称}），每件单品的颜色、款式、面料与配饰都以图${idx}为准，名称仅作辅助说明。`
     )
+    // 动漫库服装是 2D 线稿/插画，真人照片风格下需转译为真实材质，避免「真人脸 + 动漫平涂服装」拼贴感
+    if (recipe.costume.版本 === '二次元' && recipe.costume.source !== 'upload') {
+      clauses.push(
+        isPhoto
+          ? `• 动漫服装转译（重要）：图${costumeIdx} 是二次元动漫风格的服装插画，仅用于参考套装的设计、配色、图案与配饰；请把它转译为真实面料、真实剪裁与自然褶皱的成品服装穿在人物身上，保留款式、颜色与配饰；不要保留动漫线稿、黑色描边、平涂色块或 2D 插画质感，也不要照搬图中人台的灰色假人肤色，整体以人物照片与画风要求为准。`
+          : `• 动漫服装参考：图${costumeIdx} 是二次元服装插画，仅参考款式、配色与配饰；请按当前画风统一渲染为服装成品，避免线稿拼贴感，不要照搬图中人台外观。`
+      )
+    }
     idx++
   }
   if (recipe.pose) {
@@ -195,6 +215,14 @@ export function buildRecipePrompt(recipe: RecipeState, stylePreset = 'realistic'
         : `• 姿势：按照图${idx}中人体模型的动作和镜头角度摆姿势（${recipe.pose.姿势名称}，${recipe.pose.角度}）；图${idx}只是动作示意，${body}。`
     )
     idx++
+    // 仅对「全身 / 双人」姿势追加完整头身比约束（半身/特写通常不会整体比例失真）
+    if (recipe.pose.source === 'upload' || /全身|双人/.test(recipe.pose.体系)) {
+      clauses.push(isPhoto ? PROPORTION_FULLBODY_PHOTO : PROPORTION_FULLBODY_STYLIZED)
+    }
+  }
+  // 默认身材偏好：所有带人物的生成都追加（胸部略丰满、成熟匀称），更符合用户默认期望
+  if (!faceless || recipe.costume || recipe.pose) {
+    clauses.push(isPhoto ? FIGURE_PREFERENCE_PHOTO : FIGURE_PREFERENCE_STYLIZED)
   }
   if (faceless) {
     clauses.push('• 无脸展示：生成一位穿着参考服装的成年展示人物，脸部保持无五官的自然肤色表面，不添加眼睛、鼻子、嘴巴或具体人物身份；全身裸露皮肤的颜色统一，不照搬服装图或姿势图的灰白人台材质。')
@@ -251,8 +279,16 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.crossOrigin = 'anonymous'
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error(`加载图片失败: ${src}`))
+    // 超时保护：避免远端参考图一直不返回时生成流程永久挂起（isGenerating 无法复位）
+    const timer = window.setTimeout(() => reject(new Error(`加载参考图超时（20 秒）: ${src.slice(0, 120)}`)), 20000)
+    img.onload = () => {
+      window.clearTimeout(timer)
+      resolve(img)
+    }
+    img.onerror = () => {
+      window.clearTimeout(timer)
+      reject(new Error(`加载图片失败: ${src}`))
+    }
     if (src.startsWith('data:') || /^https?:\/\//i.test(src) || src.startsWith('/')) {
       img.src = src
     } else {
@@ -375,7 +411,9 @@ export function toPublicHttpsUrl(src: string): string {
 
 async function srcToPngDataUrl(src: string): Promise<string> {
   if (src.startsWith('data:image/')) return src
+  throwIfAborted()
   const img = await loadImage(src)
+  throwIfAborted()
   const maxSide = 1024
   const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
   const c = document.createElement('canvas')
@@ -394,13 +432,39 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([arr], { type: mime })
 }
 
+// ============================================================================
+// 可中断生成：定时任务「立即停止」/ 手动中断共用同一个 AbortController
+// - 云端协议：signal 直接透传给 fetch，请求立刻中断
+// - 本地 ComfyUI：轮询循环每 1.5s 检查一次，中断后调用 /interrupt 取消队列任务
+// ============================================================================
+let activeGenerationController: AbortController | null = null
+
+/** 中断当前正在进行的生图请求（若没有正在进行的生成则无副作用） */
+export function abortActiveGeneration(): void {
+  activeGenerationController?.abort()
+}
+
+/** 当前生成是否已被手动中断 */
+export function isActiveGenerationAborted(): boolean {
+  return Boolean(activeGenerationController?.signal.aborted)
+}
+
+/** 已被中断时抛出 name 为 AbortError 的错误，供上层统一识别「主动停止」 */
+function throwIfAborted(): void {
+  if (!isActiveGenerationAborted()) return
+  const error = new Error('已手动停止当前生成')
+  error.name = 'AbortError'
+  throw error
+}
+
 async function smartFetch(
   targetUrl: string,
   init: RequestInit,
   useProxy: boolean
 ): Promise<Response> {
+  const signal = init.signal ?? activeGenerationController?.signal
   if (!useProxy) {
-    return fetch(targetUrl, init)
+    return fetch(targetUrl, { ...init, signal })
   }
   const headers = new Headers(init.headers)
   headers.set('x-target-url', targetUrl)
@@ -408,6 +472,7 @@ async function smartFetch(
     method: init.method || 'POST',
     headers,
     body: init.body,
+    signal,
   })
 }
 
@@ -466,7 +531,13 @@ function extractUniversalImage(json: any): string | null {
 type ComfyNode = { class_type: string; inputs: Record<string, any>; _meta?: { title?: string; studio?: { imageRole?: string } } }
 type ComfyWorkflow = Record<string, ComfyNode>
 
-export type ComfyPresetId = 'qwen2509_3img' | 'qwen2509_2img' | 'qwen21_3img' | 'qwen21_2img'
+export type ComfyPresetId =
+  | 'qwen2509_3img'
+  | 'qwen2509_2img'
+  | 'qwen21_3img'
+  | 'qwen21_2img'
+  | 'qwen21_local_3img'
+  | 'qwen21_local_2img'
 
 export interface ComfyNodeMappings {
   promptNodeId: string
@@ -486,18 +557,20 @@ export function isLocalDevHost(): boolean {
   )
 }
 
-/** ComfyUI Desktop 默认端口 8000；便携版 / 源码版默认 8188 */
+/** 本机 ComfyUI 常见端口：便携版 / 源码版默认 8188，Desktop 旧版默认 8000，另兼容 8088 / 8189 / 8080 */
+export const LOCAL_COMFY_PORTS = [8188, 8000, 8088, 8189, 8080] as const
+export const DEFAULT_COMFY_LOCAL_URL = 'http://127.0.0.1:8188'
+
 // 注意：PROVIDER_META 在模块初始化时就会调用本函数，这里不能引用后面定义的 const
 export function defaultComfyBaseUrl(): string {
-  return isLocalDevHost() ? '/comfy' : 'http://127.0.0.1:8000'
+  return isLocalDevHost() ? '/comfy' : DEFAULT_COMFY_LOCAL_URL
 }
 
 export function comfyCandidateUrls(current = ''): string[] {
   const list = [
     current.trim(),
     isLocalDevHost() ? defaultComfyBaseUrl() : '',
-    'http://127.0.0.1:8000',
-    'http://127.0.0.1:8188',
+    ...LOCAL_COMFY_PORTS.map((port) => `http://127.0.0.1:${port}`),
   ]
     .map((x) => x.replace(/\/+$/, ''))
     .filter(Boolean)
@@ -609,14 +682,66 @@ function buildQwen21Workflow(threeImages: boolean): ComfyWorkflow {
   return wf
 }
 
-export const DEFAULT_COMFY_PRESET: ComfyPresetId = 'qwen2509_3img'
+// 本机版 Qwen-Image 2.1：使用本机已安装的 int8 量化模型，且不依赖姿态编辑 LoRA
+// （官方 2.1 工作流另有一套 bf16 模型与「动作编辑」LoRA，文件不存在时无法生成）
+const LOCAL_QWEN21_MODELS = {
+  unet: 'qwen_image_2.1_int8_convrot.safetensors',
+  clip: 'qwen3vl_8b_bf16.safetensors',
+  vae: 'qwen_image_2.1_vae_bf16.safetensors',
+} as const
+
+function buildQwen21LocalWorkflow(threeImages: boolean): ComfyWorkflow {
+  const wf = buildQwen21Workflow(threeImages)
+  // 去掉本机没有的姿态编辑 LoRA，模型直连条件缓存节点
+  delete wf['5']
+  wf['6'].inputs.model = ['4', 0]
+  // KV cache 用 int8 存储：12GB 显存下省显存且实测每张 79s → 60s（精度约等于 bf16）
+  wf['6'].inputs.dtype = 'int8'
+  wf['4'] = {
+    inputs: { unet_name: LOCAL_QWEN21_MODELS.unet, weight_dtype: 'default' },
+    class_type: 'UNETLoader',
+    _meta: { title: '加载 Qwen Image 2.1 模型（本机 int8）' },
+  }
+  wf['7'].inputs = { clip_name: LOCAL_QWEN21_MODELS.clip, type: 'qwen_image', device: 'default' }
+  wf['8'].inputs = { vae_name: LOCAL_QWEN21_MODELS.vae }
+
+  // 出图尺寸跟随「姿势参考图」的比例（与 2509 模板一致）：
+  // TextEncodeQwenImage21 自带的 latent 取的是第一张参考图（人像 4:5）的尺寸，
+  // 会让成图构图/画幅跟着人像图跑；这里改为用姿势图缩放后的画布作为 latent，
+  // 输出约 1.69 MP，3:4 姿势图即 1152×1536，全身姿势不会被裁脚。
+  const poseNodeId = threeImages ? '3' : '2'
+  wf['13'] = {
+    inputs: { image: [poseNodeId, 0], upscale_method: 'lanczos', megapixels: 1.6875, resolution_steps: 32 },
+    class_type: 'ImageScaleToTotalPixels',
+    _meta: { title: '按姿势图比例确定输出尺寸 (megapixels ≈ 1152×1536)' },
+  }
+  wf['14'] = {
+    inputs: { pixels: ['13', 0], vae: ['8', 0] },
+    class_type: 'VAEEncode',
+    _meta: { title: '输出画布 Latent' },
+  }
+  wf['10'].inputs.latent_image = ['14', 0]
+  return wf
+}
+
+export const DEFAULT_COMFY_PRESET: ComfyPresetId = 'qwen21_local_3img'
 
 export const COMFYUI_WORKFLOW_TEMPLATES: Record<
   ComfyPresetId,
   { label: string; workflow: ComfyWorkflow; defaults: ComfyNodeMappings }
 > = {
+  qwen21_local_3img: {
+    label: 'Qwen Image 2.1 三图合成（本机 int8 模型）· 推荐',
+    workflow: buildQwen21LocalWorkflow(true),
+    defaults: { promptNodeId: '9', portraitNodeId: '1', costumeNodeId: '2', poseNodeId: '3', stitchedNodeId: 'none' },
+  },
+  qwen21_local_2img: {
+    label: 'Qwen Image 2.1 双图姿态迁移（本机 int8 模型）',
+    workflow: buildQwen21LocalWorkflow(false),
+    defaults: { promptNodeId: '9', portraitNodeId: '1', costumeNodeId: 'none', poseNodeId: '2', stitchedNodeId: 'none' },
+  },
   qwen2509_3img: {
-    label: 'Qwen Image Edit 2509 三图合成（人像+服装+姿势）· 推荐',
+    label: 'Qwen Image Edit 2509 三图合成（人像+服装+姿势）',
     workflow: qwen2509ThreeImageWorkflow as ComfyWorkflow,
     defaults: { promptNodeId: '12', portraitNodeId: '1', costumeNodeId: '2', poseNodeId: '3', stitchedNodeId: 'none' },
   },
@@ -752,11 +877,15 @@ function describeComfyNetworkError(baseUrl: string, timedOut: boolean): string {
     return `[ComfyUI] 请求 ${baseUrl} 超时：ComfyUI 可能正忙或无响应，请查看 ComfyUI 终端日志。`
   }
   if (baseUrl.startsWith('/')) {
-    return `[ComfyUI] 本地代理 ${baseUrl} 无法连通 ComfyUI：请确认 ComfyUI 已启动，且端口与启动网页时的 COMFYUI_URL 一致（默认 http://127.0.0.1:8000）。`
+    return (
+      `[ComfyUI] 本地代理 ${baseUrl} 无法连通 ComfyUI：请确认 ComfyUI 已启动（默认端口 8188；` +
+      `pnpm dev 启动时会自动探测 ${LOCAL_COMFY_PORTS.join(' / ')}）。` +
+      `若 ComfyUI 端口不同，请在启动网页前设置 COMFYUI_URL，例如：$env:COMFYUI_URL="http://127.0.0.1:8188"; pnpm dev`
+    )
   }
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const reasons = [
-    `① ComfyUI 未启动，或地址/端口不对（Desktop 版默认 8000，便携版默认 8188）`,
+    `① ComfyUI 未启动，或地址/端口不对（默认 8188；Desktop 旧版为 8000；可在「接口配置」点击「检测本机模型」自动识别）`,
     `② 跨域 (CORS) 被拦截：ComfyUI 启动参数需包含 --enable-cors-header "${origin}"（该参数只能填一个来源）`,
   ]
   if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
@@ -1124,6 +1253,7 @@ async function generateWithComfyUi(params: {
 }): Promise<{ imageUrl: string; modelUsed: string; providerUsed: ImageProviderId }> {
   const { recipe, prompt, config, baseUrl, apiKey } = params
   const report = params.onProgress ?? (() => {})
+  throwIfAborted()
   const cp = config.comfyuiParams
   const timeoutSec = Math.max(60, cp.timeoutSec || 600)
   const parsedInfo = parseComfyWorkflowNodes(cp.workflowJson)
@@ -1186,6 +1316,7 @@ async function generateWithComfyUi(params: {
     throw new Error(`[ComfyUI] 请先选择或上传：${missingSlots.map((slot) => slot.label).join('、')}`)
   }
 
+  throwIfAborted()
   for (const slot of slotUploads) {
     if (!slot.nodeId || slot.nodeId === 'none' || !workflow[slot.nodeId]?.inputs) continue
     if (!slot.src) {
@@ -1196,6 +1327,7 @@ async function generateWithComfyUi(params: {
       }
       throw new Error(`当前工作流需要「${slot.label}」参考图（节点 ${slot.nodeId}），请先在图库中选择`)
     }
+    throwIfAborted()
     report({ stage: 'upload', message: `正在上传${slot.label}参考图…` })
     workflow[slot.nodeId].inputs.image = await uploadImageToComfy(baseUrl, slot.src, slot.prefix, apiKey)
   }
@@ -1206,11 +1338,13 @@ async function generateWithComfyUi(params: {
       if (node.optional && node.role === 'character_sheet') workflow[node.nodeId].inputs.image = '无'
       continue
     }
+    throwIfAborted()
     report({ stage: 'upload', message: `正在上传${node.label}…` })
     workflow[node.nodeId].inputs.image = await uploadImageToComfy(baseUrl, image.url, 'studio_reference', apiKey)
   }
 
   if (cp.stitchedNodeId && cp.stitchedNodeId !== 'none' && workflow[cp.stitchedNodeId]?.inputs) {
+    throwIfAborted()
     report({ stage: 'upload', message: '正在上传参考拼图…' })
     const stitchedDataUrl = await stitchRecipeCanvas(recipe)
     workflow[cp.stitchedNodeId].inputs.image = await uploadImageToComfy(baseUrl, stitchedDataUrl, 'studio_stitched', apiKey)
@@ -1254,6 +1388,7 @@ async function generateWithComfyUi(params: {
   })
 
   try {
+    throwIfAborted()
     report({ stage: 'queue', message: '正在提交工作流…' })
     const promptRes = await comfyFetch(
       baseUrl,
@@ -1277,6 +1412,11 @@ async function generateWithComfyUi(params: {
     const startedAt = Date.now()
     for (let attempt = 0; ; attempt++) {
       await sleep(1500)
+      // 「立即停止」：主动中断时取消 ComfyUI 队列中的任务并退出轮询
+      if (isActiveGenerationAborted()) {
+        await cancelComfyPrompt(baseUrl, apiKey, promptId)
+        throwIfAborted()
+      }
       if (Date.now() - startedAt > timeoutSec * 1000) {
         await cancelComfyPrompt(baseUrl, apiKey, promptId)
         throw new Error(
@@ -1326,6 +1466,7 @@ async function generateWithComfyUi(params: {
         continue
       }
 
+      throwIfAborted()
       report({ stage: 'download', message: '正在获取生成结果…', percent: 100 })
       const qs = new URLSearchParams({
         filename: outImg.filename,
@@ -1338,6 +1479,8 @@ async function generateWithComfyUi(params: {
       if (!blob.size || !blob.type.startsWith('image/')) {
         throw new Error('[ComfyUI] 返回的生成结果不是有效图片')
       }
+      // 下载完成前被停止：不再把结果写入历史
+      throwIfAborted()
       return { imageUrl: await blobToDataUrl(blob), modelUsed: 'ComfyUI 工作流', providerUsed: 'comfyui' }
     }
   } finally {
@@ -1364,7 +1507,7 @@ async function cancelComfyPrompt(baseUrl: string, apiKey: string, promptId: stri
   }
 }
 
-export async function generateCharacterImage(params: {
+async function generateCharacterImageInner(params: {
   recipe: RecipeState
   prompt: string
   config: ApiConfig
@@ -1420,6 +1563,8 @@ export async function generateCharacterImage(params: {
   const allImageRefs: string[] = config.sendStitchedSheet
     ? [...imageRefs, await stitchRecipeCanvas(recipe)]
     : imageRefs
+
+  throwIfAborted()
 
   let res: Response
   let json: any
@@ -1706,4 +1851,32 @@ export async function generateCharacterImage(params: {
   }
 
   return { imageUrl, modelUsed: model, providerUsed: provider }
+}
+
+/**
+ * 统一入口：生成角色图（支持通过 abortActiveGeneration() 立即中断）
+ * - 云端协议：中断进行中的 fetch
+ * - 本地 ComfyUI：中断轮询并取消队列任务
+ */
+export async function generateCharacterImage(params: {
+  recipe: RecipeState
+  prompt: string
+  config: ApiConfig
+  onProgress?: (p: GenerationProgress) => void
+}): Promise<{ imageUrl: string; modelUsed: string; providerUsed: ImageProviderId }> {
+  activeGenerationController = new AbortController()
+  try {
+    return await generateCharacterImageInner(params)
+  } catch (error) {
+    // fetch 被 abort 时抛出的是 DOMException（不是 Error 子类），且此时 controller 即将被清空；
+    // 统一转换为 name='AbortError' 的普通 Error，供上层稳定识别「主动停止」
+    if (activeGenerationController.signal.aborted) {
+      const abortError = new Error('已手动停止当前生成')
+      abortError.name = 'AbortError'
+      throw abortError
+    }
+    throw error
+  } finally {
+    activeGenerationController = null
+  }
 }

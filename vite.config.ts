@@ -1,9 +1,10 @@
 import fs from 'node:fs'
+import net from 'node:net'
 import path from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, type Plugin, type UserConfig } from 'vite'
 
 const MIME: Record<string, string> = {
   '.json': 'application/json; charset=utf-8',
@@ -98,52 +99,100 @@ function localAssetsAndProxyPlugin(): Plugin {
   }
 }
 
-// 本地 ComfyUI 同源代理：浏览器请求 /comfy/* → ComfyUI（默认 Desktop 端口 8000）
-// 这样无需修改 ComfyUI 的 --enable-cors-header 白名单。可用环境变量 COMFYUI_URL 指定其他地址。
-const COMFYUI_URL = process.env.COMFYUI_URL || 'http://127.0.0.1:8000'
-const comfyProxy = {
-  '/comfy': {
-    target: COMFYUI_URL,
-    changeOrigin: true,
-    ws: true,
-    rewrite: (p: string) => p.replace(/^\/comfy/, '') || '/',
-    configure: (proxy: any) => {
-      // ComfyUI 对带 Origin 的跨源请求做校验，代理转发时去掉浏览器 Origin，按同源请求处理
-      proxy.on('proxyReq', (proxyReq: any) => proxyReq.removeHeader('origin'))
-      proxy.on('proxyReqWs', (proxyReq: any) => proxyReq.removeHeader('origin'))
-    },
-  },
+// 本地 ComfyUI 同源代理：浏览器请求 /comfy/* → 本机 ComfyUI
+// 这样无需修改 ComfyUI 的 --enable-cors-header 白名单。
+// 目标端口解析规则（按优先级）：
+//   1. 环境变量 COMFYUI_URL（例如 PowerShell: $env:COMFYUI_URL="http://127.0.0.1:8188"; pnpm dev）
+//   2. 启动时自动探测本机常见端口：8000(Desktop 旧版) / 8188(便携版/源码版) / 8088 / 8189 / 8080
+//   3. 全部未探测到时回退 8188（启动 ComfyUI 后重启 dev 或显式设置 COMFYUI_URL 即可生效）
+const COMFYUI_PORT_CANDIDATES = [8000, 8188, 8088, 8189, 8080]
+const COMFYUI_FALLBACK_URL = 'http://127.0.0.1:8188'
+
+const probePort = (port: number, host = '127.0.0.1'): Promise<boolean> =>
+  new Promise((resolve) => {
+    const socket = net.connect({ port, host })
+    let settled = false
+    const done = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      socket.removeAllListeners()
+      socket.destroy()
+      resolve(ok)
+    }
+    socket.setTimeout(400)
+    socket.once('connect', () => done(true))
+    socket.once('timeout', () => done(false))
+    socket.once('error', () => done(false))
+  })
+
+async function resolveComfyTarget(): Promise<string> {
+  const explicit = process.env.COMFYUI_URL?.trim()
+  if (explicit) {
+    const url = explicit.replace(/\/+$/, '')
+    console.log(`[comfy] 使用环境变量 COMFYUI_URL = ${url}`)
+    return url
+  }
+  for (const port of COMFYUI_PORT_CANDIDATES) {
+    if (await probePort(port)) {
+      const url = `http://127.0.0.1:${port}`
+      console.log(`[comfy] 已探测到本地 ComfyUI：${url}（/comfy 同源代理指向该端口）`)
+      return url
+    }
+  }
+  console.warn(
+    `[comfy] 未探测到运行中的 ComfyUI（已尝试端口 ${COMFYUI_PORT_CANDIDATES.join(' / ')}），` +
+      `/comfy 代理暂指向 ${COMFYUI_FALLBACK_URL}。请先启动 ComfyUI 再运行 pnpm dev；` +
+      `若端口不同，可设置 COMFYUI_URL 后重启，或在合成台「检测本机模型」中自动识别。`
+  )
+  return COMFYUI_FALLBACK_URL
 }
 
-export default defineConfig({
-  publicDir: false,
-  plugins: [
-    localAssetsAndProxyPlugin(),
-    tanstackRouter({ target: 'react', autoCodeSplitting: true }),
-    react(),
-    tailwindcss(),
-  ],
-  resolve: {
-    alias: { '@': path.resolve(import.meta.dirname, './src') },
-  },
-  build: {
-    rolldownOptions: {
-      output: {
-        codeSplitting: {
-          groups: [
-            { name: 'react-vendor', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
-            { name: 'tanstack-vendor', test: /node_modules[\\/]@tanstack[\\/]/ },
-            { name: 'ui-vendor', test: /node_modules[\\/](radix-ui|@radix-ui|lucide-react|sonner)[\\/]/ },
-          ],
+export default defineConfig(async (): Promise<UserConfig> => {
+  const comfyTarget = await resolveComfyTarget()
+  const comfyProxy = {
+    '/comfy': {
+      target: comfyTarget,
+      changeOrigin: true,
+      ws: true,
+      rewrite: (p: string) => p.replace(/^\/comfy/, '') || '/',
+      configure: (proxy: any) => {
+        // ComfyUI 对带 Origin 的跨源请求做校验，代理转发时去掉浏览器 Origin，按同源请求处理
+        proxy.on('proxyReq', (proxyReq: any) => proxyReq.removeHeader('origin'))
+        proxy.on('proxyReqWs', (proxyReq: any) => proxyReq.removeHeader('origin'))
+      },
+    },
+  }
+
+  return {
+    publicDir: false,
+    plugins: [
+      localAssetsAndProxyPlugin(),
+      tanstackRouter({ target: 'react', autoCodeSplitting: true }),
+      react(),
+      tailwindcss(),
+    ],
+    resolve: {
+      alias: { '@': path.resolve(import.meta.dirname, './src') },
+    },
+    build: {
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              { name: 'react-vendor', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+              { name: 'tanstack-vendor', test: /node_modules[\\/]@tanstack[\\/]/ },
+              { name: 'ui-vendor', test: /node_modules[\\/](radix-ui|@radix-ui|lucide-react|sonner)[\\/]/ },
+            ],
+          },
         },
       },
     },
-  },
-  server: {
-    port: 5173,
-    proxy: comfyProxy,
-  },
-  preview: {
-    proxy: comfyProxy,
-  },
+    server: {
+      port: 5173,
+      proxy: comfyProxy,
+    },
+    preview: {
+      proxy: comfyProxy,
+    },
+  }
 })

@@ -34,11 +34,20 @@ corepack pnpm dev
 ```
 
 打开 http://localhost:5173/studio，接口协议选「本地 ComfyUI」。
-本地运行时 ComfyUI 地址填 `/comfy`（默认值）：Vite 把 `/comfy/*` 同源代理到 `http://127.0.0.1:8000`，
-因此不需要修改 ComfyUI 的 `--enable-cors-header`。ComfyUI 在其他端口时：
+本地运行时 ComfyUI 地址填 `/comfy`（默认值）：Vite 把 `/comfy/*` 同源代理到本机 ComfyUI。
+`pnpm dev` 启动时会**自动探测常见端口**（`8000 / 8188 / 8088 / 8189 / 8080`，默认 8188），
+探测到哪个就代理到哪个，因此通常**不需要手动配置**，也无需修改 ComfyUI 的 `--enable-cors-header`。
+如果自动探测不到（例如 ComfyUI 启动较慢、或端口不在列表内），可以显式指定：
 
 ```bash
+# 建议先启动 ComfyUI，再启动网页（探测只在 dev server 启动时执行）
 COMFYUI_URL=http://127.0.0.1:8188 corepack pnpm dev
+```
+
+PowerShell 写法：
+
+```powershell
+$env:COMFYUI_URL="http://127.0.0.1:8188"; pnpm dev
 ```
 
 直连（不经代理）时，ComfyUI 启动参数需要 `--enable-cors-header "<网页的来源>"`，该参数只能填一个来源。

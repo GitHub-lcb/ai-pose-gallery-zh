@@ -4,7 +4,7 @@
 用法（在仓库根目录）:
     python3 scripts/download.py
     WORKERS=64 python3 scripts/download.py
-    DATASET=costume python3 scripts/download.py   # 仅下载指定数据集 (pose|costume|portrait|all)
+    DATASET=costume python3 scripts/download.py   # 仅下载指定数据集 (pose|depth|costume|costume-anime|portrait|all)
 """
 import json
 import os
@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 POSE_BASE = "https://ai-pose-gallery.pages.dev/"
 POSE_DEPTH_BASE = "https://ai-pose-depth-gallery.pages.dev/"
 COSTUME_BASE = "https://ai-costume-gallery.pages.dev/"
+COSTUME_ANIME_BASE = "https://ai-costume-anime-gallery.pages.dev/"
 PORTRAIT_BASE = "https://ai-portrait-gallery.pages.dev/"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -69,6 +70,29 @@ if DATASET in ("all", "costume"):
                     COSTUME_BASE + item["原寸"],
                     os.path.join(ROOT, "img", "costume", f"{cid}.png"),
                     COSTUME_BASE,
+                ))
+
+# 2b. COSTUME ANIME（二次元动漫服装，迁移自 nvzhuang）
+if DATASET in ("all", "costume-anime", "costume_anime"):
+    costume_anime_path = os.path.join(ROOT, "data", "costume-anime.json")
+    if os.path.exists(costume_anime_path):
+        with open(costume_anime_path, encoding="utf-8") as f:
+            for item in json.load(f):
+                cid = item["id"]
+                tasks_fast.append((
+                    COSTUME_ANIME_BASE + f"thumbs/{cid}.webp",
+                    os.path.join(ROOT, "thumbs", "costume-anime", f"{cid}.webp"),
+                    COSTUME_ANIME_BASE,
+                ))
+                tasks_fast.append((
+                    COSTUME_ANIME_BASE + f"img/{cid}.webp",
+                    os.path.join(ROOT, "img", "costume-anime", f"{cid}.webp"),
+                    COSTUME_ANIME_BASE,
+                ))
+                tasks_full.append((
+                    COSTUME_ANIME_BASE + f"png/{cid}.png",
+                    os.path.join(ROOT, "img", "costume-anime", f"{cid}.png"),
+                    COSTUME_ANIME_BASE,
                 ))
 
 # 3. PORTRAIT

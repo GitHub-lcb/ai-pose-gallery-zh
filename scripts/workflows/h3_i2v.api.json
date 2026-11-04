@@ -1,0 +1,217 @@
+{
+  "1": {
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "加载 MiniMax H3 模型"
+    }
+  },
+  "2": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载 H3 文本编码器 (Qwen3-VL 32B)"
+    }
+  },
+  "3": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "视频 VAE"
+    }
+  },
+  "4": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "音频 VAE"
+    }
+  },
+  "5": {
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "strength_model": 1
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "turbo 8 步加速 LoRA（不需要可直连 1 号节点）"
+    }
+  },
+  "6": {
+    "inputs": {
+      "image": "storyboard_first.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "首帧关键帧"
+    }
+  },
+  "7": {
+    "inputs": {
+      "clip": [
+        "2",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "prompt": "Cinematic vertical portrait of the young woman in the reference frame. She smiles and waves gently at the camera, natural hair movement, soft studio lighting, subtle handheld camera drift, shallow depth of field. Ambient studio room tone with a soft warm piano melody. High quality, photorealistic, 24fps.",
+      "width": 768,
+      "height": 1024,
+      "length": 39,
+      "first_frame": [
+        "6",
+        0
+      ],
+      "last_frame": [
+        "6b",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3ImageToVideo",
+    "_meta": {
+      "title": "H3 首/尾帧 → 视频+音频"
+    }
+  },
+  "8": {
+    "inputs": {
+      "model": [
+        "5",
+        0
+      ],
+      "conditioning": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "BasicGuider"
+  },
+  "9": {
+    "inputs": {
+      "sampler_name": "res_multistep"
+    },
+    "class_type": "KSamplerSelect"
+  },
+  "10": {
+    "inputs": {
+      "model": [
+        "5",
+        0
+      ],
+      "scheduler": "simple",
+      "steps": 8,
+      "denoise": 1
+    },
+    "class_type": "BasicScheduler"
+  },
+  "11": {
+    "inputs": {
+      "noise_seed": 123456
+    },
+    "class_type": "RandomNoise"
+  },
+  "12": {
+    "inputs": {
+      "noise": [
+        "11",
+        0
+      ],
+      "guider": [
+        "8",
+        0
+      ],
+      "sampler": [
+        "9",
+        0
+      ],
+      "sigmas": [
+        "10",
+        0
+      ],
+      "latent_image": [
+        "7",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced"
+  },
+  "13": {
+    "inputs": {
+      "samples": [
+        "12",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "VAEDecode"
+  },
+  "14": {
+    "inputs": {
+      "samples": [
+        "12",
+        0
+      ],
+      "vae": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio"
+  },
+  "15": {
+    "inputs": {
+      "images": [
+        "13",
+        0
+      ],
+      "audio": [
+        "14",
+        0
+      ],
+      "fps": 24,
+      "bit_depth": 8,
+      "color_space": "sRGB"
+    },
+    "class_type": "CreateVideo"
+  },
+  "16": {
+    "inputs": {
+      "video": [
+        "15",
+        0
+      ],
+      "filename_prefix": "video/storyboard",
+      "format": "mp4",
+      "codec": "auto"
+    },
+    "class_type": "SaveVideo"
+  },
+  "6b": {
+    "inputs": {
+      "image": "storyboard_last.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "尾帧关键帧（可选，删除此节点即可关闭）"
+    }
+  }
+}

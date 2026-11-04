@@ -1,6 +1,6 @@
 # AI 角色参考与合成工作台 · 中文版（3合1）
 
-> **姿势库（1,439 张素体白模 + 1,439 张深度图 Depth） + 服装库（1,407 套） + 人像库（1,499 位） = 4,345 条全中文参考数据 / 11,568 张本地高清图**，集成 **5 大 AI 图像协议直连工作台** 与 **原生 ComfyUI 自定义节点插件（`custom_nodes`）**。
+> **姿势库（1,439 张素体白模 + 1,439 张深度图 Depth） + 服装库（1,407 套真人写实 + 1,320 套二次元动漫） + 人像库（1,499 位） = 5,665 条全中文参考数据 / 14,208 张本地高清图**，集成 **5 大 AI 图像协议直连工作台** 与 **原生 ComfyUI 自定义节点插件（`custom_nodes`）**。
 
 ![画廊总览预览](docs/preview.jpg)
 
@@ -34,13 +34,13 @@
 
 原站是ギア（@giaaibusi）发布的三大 AI 绘画参考图库（姿势、服装、人像），元数据全部为日文，且分散在三个独立站点。本仓库（v2.0）完成了**三站合一、全量中文化、AI 角色合成工作台与 ComfyUI 原生插件升级**：
 
-1. **三库四站全量本地镜像（11,568 张图）** —— 完整收录姿势库（素体白模 2,878 张 + 深度图 Depth 2,878 张 WebP）、服装库（2,814 张 WebP）、人像库（2,998 张，全尺寸 `1600×2000` 高清 WebP）的全部缩略图与高清原图，支持纯离线浏览与静态托管。
+1. **三库四站全量本地镜像（14,208 张图）** —— 完整收录姿势库（素体白模 2,878 张 + 深度图 Depth 2,878 张 WebP）、服装库（真人写实 2,814 张 + 二次元动漫 2,640 张 = 5,454 张 WebP）、人像库（2,998 张，全尺寸 `1600×2000` 高清 WebP）的全部缩略图与高清原图，支持纯离线浏览与静态托管。
 2. **100% 纯净中文元数据（零日文残留）** —— 动作体系、姿势分类、服装款式、穿搭标签、人像分区、发长与 51 种细分发型全部译为地道中文，自动组装的生图提示词纯净无日文干扰。
 3. **三合一 AI 角色合成工作台（Web Studio）** —— 基于 **React 19 + Tailwind CSS 4 + TypeScript 7 + shadcn/ui + TanStack Router** 构建的响应式多页面应用（兼容 PC / 平板 / 手机）：
    - 从三大图库任意挑选 **人像 + 服装 + 姿势（支持素体白模 / 深度图一键切换）** 组合配方，或一键随机捏人；
    - 支持拖拽、剪贴板粘贴（`Cmd+V` / `Ctrl+V`）或 URL 添加多张自定义附加参考图；
    - 内置 **5 大 AI 图像协议直连**（Google Gemini、OpenAI GPT Image、阿里云百炼 Qwen、字节火山方舟 Doubao、**本地 ComfyUI**），生成记录通过 **IndexedDB** 本地持久化保存。
-4. **原生 ComfyUI 自定义节点插件（`custom_nodes`）** —— 本仓库同时是一个即插即用的 ComfyUI 插件！直接 `git clone` 到 `ComfyUI/custom_nodes/` 即可在 ComfyUI 画布内使用 **姿势 / 服装 / 人像 / 三合一角色配方** 4 个自定义节点（姿势与配方节点内置 `use_depth` 深度图切换，可直接接入 ControlNet Depth）与内置的 **4,345 条中文可视化弹窗选图器**。
+4. **原生 ComfyUI 自定义节点插件（`custom_nodes`）** —— 本仓库同时是一个即插即用的 ComfyUI 插件！直接 `git clone` 到 `ComfyUI/custom_nodes/` 即可在 ComfyUI 画布内使用 **姿势 / 服装 / 人像 / 三合一角色配方** 4 个自定义节点（姿势与配方节点内置 `use_depth` 深度图切换，可直接接入 ControlNet Depth）与内置的 **5,665 条中文可视化弹窗选图器**。
 
 ---
 
@@ -48,7 +48,7 @@
 
 ### 1. 三大参考图库（姿势 / 服装 / 人像）
 - **姿势参考库（`/poses`）**：4 大体系（全身单人・标准系 / 全身单人・性感系 / 上半身单人 / 双人缠绵）、26 个动作分类、288 组姿势、5 种视角（正面 / 斜前 / 侧面 / 背面 / 俯视），支持**按姿势分组 / 逐张浏览**双模式、卡片内多角度切换，以及 **`[ 素体白模 | 深度图 (Depth) ]` 一键切换预览与下载**。
-- **服装参考库（`/costumes`）**：8 大穿搭分类（春季 / 夏季 / 秋季 / 冬季 / 内衣・睡衣 / 性感穿搭 / 泳装・度假 / 派对・礼服）、86 个中文细节标签与英文 Prompt 关键词。
+- **服装参考库（`/costumes`）**：**真人写实（1,407 套）+ 二次元动漫（1,320 套）双版本**，支持「全部 / 真人写实 / 二次元动漫」一键切换图库版本；8 大穿搭分类（春季 / 夏季 / 秋季 / 冬季 / 内衣・睡衣 / 性感穿搭 / 泳装・度假 / 派对・礼服）、86 个中文细节标签与英文 Prompt 关键词。**动漫服装会被当作「设计参考」**：真人照片风格下自动转译为真实面料 / 剪裁 / 自然褶皱（避免「真人脸 + 2D 平涂服装」拼贴感），搭配二次元画风时则按画风统一渲染。
 - **人像参考库（`/portraits`）**：2 大分区（正脸参考 893 / 造型氛围 606）、4 种发长（短发 / 中发 / 中长发 / 长发）、51 种细分发型，支持**精选题集**与**热门榜单**一键筛选。
 - **统一交互体验**：中文关键词实时检索、灯箱高清原图预览与下载、一键「加入合成配方」。
 
@@ -63,6 +63,11 @@
   - **字节火山方舟 Doubao**：`doubao-seedream-5-0`、`doubao-seedream-4-5-251128`、`doubao-seedream-4-0-250828`、`doubao-seededit-3-0-i2i-250628`（支持多图融合 `image: [...]`、2K/4K 分辨率）
   - **本地 ComfyUI 工作流引擎**：支持自动将三合一拼图及单张人像/服装/姿势图上传至本地 ComfyUI（`/upload/image`），注入自定义 API 工作流占位符或自动识别节点提交 `/prompt` 队列并轮询取回成品图；支持导入/导出通用 `.api.json` 工作流模板。
 - **跨页面后台生图 & IndexedDB 历史记录**：切换页面不会中断正在进行的生图请求；生成结果自动存入浏览器 IndexedDB（避免 `localStorage` 容量限制），支持复用提示词与原图下载。
+- **定时任务 · 自动随机出图（可随时停止）**：合成台右栏内置「定时任务」模块 —— 可设置随机间隔（默认 10–30 秒）与张数上限（0 为不限），自动随机抽取「人像 + 服装 + 姿势」配方（跟随安全模式）并从内置画风预设中随机切换，持续自动出图；提供成功/失败统计、下一张倒计时、连续失败 3 次自动暂停。点击「立即停止」会**马上中断正在进行的请求**（云端 `fetch` 或本地 ComfyUI 队列任务），任务运行在当前页面内：切换页面不中断，刷新/关闭页面后自动停止。
+- **生图保存位置（可选本地文件夹）**：在「生成结果」下方可一键选择本地文件夹（File System Access API，Chrome/Edge 桌面版），手动生成与定时任务的每张结果都会自动写入该文件夹（按生成时间命名、不覆盖旧图），也可随时「保存当前」；文件夹授权会记住，失效时可一键重新授权。不支持该 API 的浏览器自动回退为「生成后自动下载」到浏览器默认下载目录。
+- **生图成人模式（18+，默认关闭）**：在合成台「1. 参考图组合」中可把随机配方设为 **关闭（仅 SFW）/ 混合 18+ / 仅 18+ 素材**——仅影响生成素材池（性感系姿势、双人缠绵、内衣・睡衣、性感穿搭），不影响图库浏览；开启时需通过 18+ 年龄确认（同时解锁图库敏感分类），重新开启安全模式会自动重置为关闭。手动「随机」、顶部「随机捏人」与定时任务自动随机配方全部生效。
+- **随机配方服装版本控制**：默认随机配方 / 定时任务**只抽真人写实服装**，避免真人脸与动漫服装随机混搭产生违和感；可切换为「全部版本 / 仅二次元动漫」。手动选择服装不受限制（动漫服装会自动做材质转译，详见下方服装库说明）。
+- **出图质量优化 & 定时任务质量过滤**：针对「全身照比例失真（实测最典型是**头大身小 / 幼态比例**）」的问题，全身 / 双人姿势的提示词会自动追加**头身比约束**（约 7~7.5 头身、头部不要偏大、躯干与四肢协调、脚部完整），所有带人物的生成还会追加**默认身材偏好**（成年女性成熟匀称、胸部略丰满但自然不夸张）；定时任务新增「质量过滤」开关（默认开），每张生成后自动检测模糊 / 空白 / 低清晰度 / 分辨率 / 曝光异常，不达标**直接丢弃并自动重抽**（连续 5 张自动暂停），手动生成仅在检出问题时提示、结果仍保留。
 
 > 本地 ComfyUI 三图合成（Qwen Image Edit 2509）的模型清单、工作流说明和本地运行方法见 [docs/comfyui-local.md](docs/comfyui-local.md)。
 
@@ -73,7 +78,7 @@
 - **AI 姿势参考图 (`PoseGalleryNode`)**：输出 `姿势图 (IMAGE)`、`图片ID`、`姿势提示词`（支持 `use_depth` 开关一键切换输出素体白模或深度图）
 - **AI 服装参考图 (`CostumeGalleryNode`)**：输出 `服装图 (IMAGE)`、`图片ID`、`中文服装描述`、`英文服装Prompt`
 - **AI 人像参考图 (`PortraitGalleryNode`)**：输出 `人像图 (IMAGE)`、`图片ID`、`人像发型描述`
-- **AI 角色三合一合成配方 (`CharacterRecipeNode`)**：单节点同时输出 `人像图`、`服装图`、`姿势图（支持 use_depth 深度图切换）`、`三合一拼图` 以及自动组装的 `中文合成Prompt` 与 `英文合成Prompt`，并内置 **4,345 条中文可视化弹窗选图器（含 🌗 深度图预览开关）**与节点内实时缩略图预览。
+- **AI 角色三合一合成配方 (`CharacterRecipeNode`)**：单节点同时输出 `人像图`、`服装图`、`姿势图（支持 use_depth 深度图切换）`、`三合一拼图` 以及自动组装的 `中文合成Prompt` 与 `英文合成Prompt`，并内置 **5,665 条中文可视化弹窗选图器（含 🌗 深度图预览开关）**与节点内实时缩略图预览。
 
 ---
 
@@ -83,9 +88,11 @@
 | --- | --- | ---: | ---: |
 | **姿势库（Pose 白模）** | 全身标准 (365) · 全身性感 (399) · 上半身 (400) · 双人缠绵 (275) | 1,439 | 2,878 张（缩略图 `.jpg` + 原图 `.png`） |
 | **姿势深度图（Pose Depth）** | 与 1,439 条姿势 ID 一一对应（`POSE-DB-02`） | 1,439（共享索引） | 2,878 张（缩略图 `.webp` + 原图 `.webp`） |
-| **服装库（Costume）** | 春季 (215) · 夏季 (254) · 秋季 (244) · 冬季 (253) · 内衣睡衣 (199) · 性感 (140) · 泳装 (54) · 礼服 (48) | 1,407 | 2,814 张（缩略图 `.webp` + 原图 `.webp`） |
+| **服装库（Costume）** | 真人写实 1,407 + 二次元动漫 1,320；春季 (412) · 夏季 (491) · 秋季 (474) · 冬季 (485) · 内衣睡衣 (396) · 性感 (279) · 泳装 (106) · 礼服 (84) | 2,727 | 5,454 张（缩略图 `.webp` + 原图 `.webp`） |
 | **人像库（Portrait）** | 正脸参考 (893) · 造型氛围 (606) / 短发 (727) · 中发 (376) · 中长发 (260) · 长发 (136) | 1,499 | 2,998 张（缩略图 `.webp` + `1600×2000` 原图 `.webp`） |
-| **合计** | **3 大图库全中文索引（含白模 + 深度双视图）** | **4,345** | **11,568 张** |
+| **合计** | **3 大图库全中文索引（含白模 + 深度双视图）** | **5,665** | **14,208 张** |
+
+> 👗 **二次元动漫服装来源**：服装库中的 1,320 套二次元动漫服装迁移自兄弟项目 **[nvzhuang（拍片哥女装）](https://github.com/paipiange/nvzhuang)**，图片源站为 `ai-costume-anime-gallery.pages.dev`（原作者 ギア @giaaibusi），与真人写实库共用同一套 8 大分类与中英双语词条；为与真人库区分、避免 ID 冲突，动漫记录统一使用 `ANM-` 前缀（如 `ANM-SPR-0001`）。
 
 ---
 
@@ -103,16 +110,16 @@ git clone --depth 1 https://github.com/anhao/ai-pose-gallery-zh.git
 重启 ComfyUI 后：
 1. 在画布空白处右键 → **新建节点** → **AI角色三合一参考图集**；
 2. 选择 **「AI 角色三合一合成配方 (3-in-1 Recipe)」** 或单个姿势 / 服装 / 人像节点；
-3. 点击节点上的 **「🎨 打开三合一选图器 (4,345张)」** 按钮（或直接点击节点上的缩略图），即可在弹窗中按分类、视角、发长筛选或中文搜索，一键填入节点并输出 `IMAGE` 张量与中英文 Prompt。
+3. 点击节点上的 **「🎨 打开三合一选图器 (5,665张)」** 按钮（或直接点击节点上的缩略图），即可在弹窗中按分类、视角、发长筛选或中文搜索，一键填入节点并输出 `IMAGE` 张量与中英文 Prompt。
 
 ### 模式 B：从 Web 合成台直连本地 ComfyUI API
 
 如果您使用线上网页端（或本地 `pnpm dev`）选图，希望直接调用本机 ComfyUI 生图：
-1. 启动本地 ComfyUI 时开启跨域参数：
+1. **本地 `pnpm dev`（推荐）**：Vite 会把 `/comfy/*` 同源代理到本机 ComfyUI，并在启动时**自动探测** `8000 / 8188 / 8088 / 8189 / 8080`（默认 8188），**无需**给 ComfyUI 加跨域参数；先启动 ComfyUI 再启动 dev 即可。线上网页端直连时，才需要启动 ComfyUI 时加跨域参数：
    ```bash
    python main.py --enable-cors-header "*"
    ```
-2. 打开本工作台 **「接口配置」** 页面 → 切换到 **「本地 ComfyUI」** → 点击「检测连接」（默认 `http://127.0.0.1:8188`）；
+2. 打开本工作台 **「接口配置」** 页面 → 切换到 **「本地 ComfyUI」** → 点击「检测连接」或「检测本机模型」（会自动尝试常见端口，默认 `http://127.0.0.1:8188`）；
 3. 可直接导入您在 ComfyUI 中通过 `工作流 -> 导出 (API)` 保存的 `.json` 文件（支持 `{{prompt}}`、`{{seed}}`、`{{width}}`、`{{height}}`、`{{composite_image}}`、`{{portrait_image}}`、`{{costume_image}}`、`{{pose_image}}` 占位符，或由系统自动匹配 `CLIPTextEncode` / `KSampler` / `LoadImage` 节点），也可在 **「合成台」** 一键导出内置通用工作流模板。
 
 ---
@@ -131,7 +138,7 @@ git clone --depth 1 https://github.com/anhao/ai-pose-gallery-zh.git
 ├── comfyui_plugin/         # ComfyUI 原生插件模块
 │   ├── nodes.py            # 姿势 / 服装 / 人像 / 三合一角色配方 4 个 ComfyUI 节点实现
 │   ├── routes.py           # ComfyUI PromptServer 本地目录与图片静态服务路由
-│   └── web/                # ComfyUI 画布节点缩略图预览与 4,345 张可视化弹窗选图器 (extension.js / style.css)
+│   └── web/                # ComfyUI 画布节点缩略图预览与 5,665 张可视化弹窗选图器 (extension.js / style.css)
 ├── src/
 │   ├── components/         # 通用组件、AppLayout 响应式导航、GalleryLightbox 灯箱、RecipeDock
 │   ├── routes/             # 页面路由：概览(index)、姿势(poses)、服装(costumes)、人像(portraits)、合成台(studio)、配置(settings)、指南(guide)
@@ -144,14 +151,16 @@ git clone --depth 1 https://github.com/anhao/ai-pose-gallery-zh.git
 ├── wrangler.jsonc          # Cloudflare Workers 配置文件
 ├── data/
 │   ├── pose.json / pose-zh.json                 # 姿势库原始数据 & 中文数据（1,439 条）
-│   ├── costume.json / costume-zh.json           # 服装库原始数据 & 中文数据（1,407 条）
+│   ├── costume.json / costume-zh.json           # 服装库原始数据 & 中文数据（含二次元动漫，共 2,727 条）
+│   ├── costume-anime.json / costume-anime-meta.json # 二次元动漫服装原始数据（1,320 条，迁移自 nvzhuang）
 │   ├── portrait.json / portrait-zh.json         # 人像库原始数据 & 中文数据（1,499 条）
 │   ├── meta-zh.json / *-meta-zh.json            # 三库中文体系分类元数据与热门榜单
 │   └── translations.csv                         # 日⇄中翻译对照表
-├── thumbs/                 # 缩略图目录（姿势根目录 + depth/ + costume/ + portrait/）
-├── img/                    # 高清原图目录（姿势根目录 + depth/ + costume/ + portrait/）
+├── thumbs/                 # 缩略图目录（姿势根目录 + depth/ + costume/ + costume-anime/ + portrait/）
+├── img/                    # 高清原图目录（姿势根目录 + depth/ + costume/ + costume-anime/ + portrait/）
 ├── scripts/
 │   ├── download.py         # 四站并发下载器（支持 DATASET=all|pose|depth|costume|portrait）
+│   ├── import_anime_costumes.py # 从 nvzhuang 迁移二次元动漫服装数据（生成 data/costume-anime.json）
 │   ├── i18n.py             # 日译中词典与人像发型/服装标签映射
 │   ├── apply_translation.py# 生成三库 *-zh.json 纯中文数据与检索索引
 │   ├── verify.py           # 校验本地图片完整性（存在性 / 大小 / 文件头）
@@ -173,6 +182,11 @@ pnpm install
 # 2. 启动本地开发服务器（默认 http://localhost:5173）
 pnpm dev
 
+# 可选：本机 ComfyUI 生图（先启动 ComfyUI；dev 启动时会自动探测 8000/8188/8088/8189/8080）
+# 若自动探测不到，可显式指定端口后重启 dev：
+# PowerShell:  $env:COMFYUI_URL="http://127.0.0.1:8188"; pnpm dev
+# bash:        COMFYUI_URL=http://127.0.0.1:8188 pnpm dev
+
 # 3. 类型检查 + 生产构建 + 代码规范检查
 pnpm build && pnpm lint
 ```
@@ -184,10 +198,13 @@ pnpm build && pnpm lint
 python3 scripts/download.py
 WORKERS=64 python3 scripts/download.py   # 调整并发线程数
 
-# 修改 scripts/i18n.py 词典后，重新生成三库中文 JSON
+# 修改 scripts/i18n.py 词典后，重新生成三库中文 JSON（含二次元动漫服装）
 python3 scripts/apply_translation.py
 
-# 校验全部图片文件是否完整
+# 从兄弟项目 nvzhuang 重新导入二次元动漫服装原始数据（默认读取 ../nvzhuang/data-anime.js）
+python3 scripts/import_anime_costumes.py --source ../nvzhuang/data-anime.js
+
+# 校验全部图片文件是否完整（含二次元动漫服装）
 python3 scripts/verify.py
 ```
 
@@ -195,7 +212,7 @@ python3 scripts/verify.py
 
 ## 部署到 Cloudflare（Workers / Pages）
 
-本项目自带 [wrangler.jsonc](wrangler.jsonc) 与 [worker.ts](worker.ts)，同时支持 **Cloudflare Workers（含静态 Assets + `/api/proxy` 同源代理）** 与 **Cloudflare Pages** 部署。仓库总体积约 `1.1 GB`、总文件数约 `11,600` 个、单文件全部 `< 2 MB`，完全符合 Cloudflare 免费版限制（单文件 ≤ 25 MiB，文件数 ≤ 20,000）。
+本项目自带 [wrangler.jsonc](wrangler.jsonc) 与 [worker.ts](worker.ts)，同时支持 **Cloudflare Workers（含静态 Assets + `/api/proxy` 同源代理）** 与 **Cloudflare Pages** 部署。仓库总体积约 `1.16 GB`、总文件数约 `14,250` 个、单文件全部 `< 2 MB`，完全符合 Cloudflare 免费版限制（单文件 ≤ 25 MiB，文件数 ≤ 20,000）。
 
 > 💡 **自定义代理域名白名单（可选）**：`/api/proxy` 默认放行五大官方 AI 接口域名，并在切换至阿里云百炼（Qwen）或火山方舟（Doubao）时自动开启。若需通过服务端代理转发自定义中转站，可在 Cloudflare 环境变量或 `wrangler.jsonc` 的 `vars.PROXY_ALLOWED_ORIGINS` 中配置逗号分隔的来源白名单（支持精确域名与泛子域名，如 `https://api.example.com,https://*.openai.com`）。
 

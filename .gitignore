@@ -15,6 +15,9 @@ venv/
 download_failed.txt
 verify_failed.txt
 
+# 24/7 自动生成输出（scripts/autogen.mjs）
+.auto-gen/
+
 # 本地/编辑器
 .workbuddy/
 .idea/
@@ -27,6 +30,7 @@ node_modules/
 dist/
 backups/
 img/costume/*.png
+img/costume-anime/*.png
 img/portrait/*.png
 img/depth/*.png
 thumbs/depth/*.jpg

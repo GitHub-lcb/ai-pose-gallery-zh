@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """把日文/英文数据回填为中文：
-- Pose:     data/pose-zh.json / meta-zh.json
-- Costume:  data/costume-zh.json / costume-meta-zh.json
-- Portrait: data/portrait-zh.json / portrait-meta-zh.json
-- 对照表:   data/translations.csv
+- Pose:      data/pose-zh.json / meta-zh.json
+- Costume:   data/costume-zh.json / costume-meta-zh.json
+             （含 nvzhuang 迁移的 1,320 套二次元动漫服装，ID 前缀 ANM-）
+- Portrait:  data/portrait-zh.json / portrait-meta-zh.json
+- 对照表:    data/translations.csv
 
 用法（在仓库根目录）: python3 scripts/apply_translation.py
 """
@@ -86,6 +87,7 @@ if os.path.exists(costume_path):
         img_rel = f"img/costume/{cid}.webp"
         costume_out.append({
             "id": cid,
+            "版本": "真人",
             "分类": cat_zh,
             "服装名称": name_zh,
             "标签": tags_zh,
@@ -96,15 +98,61 @@ if os.path.exists(costume_path):
             "检索": f'{cid} {cat_zh} {name_zh} {" ".join(tags_zh)} {x["キーワード"]}',
         })
 
+# ==============================================================================
+# 2.5 二次元动漫服装（迁移自 nvzhuang 的 1,320 套，ID 加 ANM- 前缀避免与真人库冲突）
+# ==============================================================================
+anime_out = []
+anime_meta = None
+anime_path = os.path.join(DATA, "costume-anime.json")
+if os.path.exists(anime_path):
+    with open(anime_path, encoding="utf-8") as f:
+        anime_data = json.load(f)
+    with open(os.path.join(DATA, "costume-anime-meta.json"), encoding="utf-8") as f:
+        anime_meta = json.load(f)
+
+    missing_cats = sorted({x["カテゴリ"] for x in anime_data} - set(i18n.COSTUME_CATEGORY))
+    missing_words = sorted({w for x in anime_data for w in x["キーワード"].split()} - set(i18n.COSTUME_WORD_ALL))
+    if missing_cats or missing_words:
+        print("!! 动漫 Costume 缺失译词：", missing_cats, missing_words)
+        sys.exit(1)
+
+    for x in anime_data:
+        cid = x["id"]
+        anm_id = f"ANM-{cid}"
+        cat_zh = i18n.COSTUME_CATEGORY[x["カテゴリ"]]
+        name_zh, tags_zh = i18n.translate_costume_keywords(x["キーワード"])
+        thumb_rel = f"thumbs/costume-anime/{cid}.webp"
+        img_rel = f"img/costume-anime/{cid}.webp"
+        anime_out.append({
+            "id": anm_id,
+            "版本": "二次元",
+            "分类": cat_zh,
+            "服装名称": name_zh,
+            "标签": tags_zh,
+            "关键词": x["キーワード"],
+            "缩略图": thumb_rel,
+            "预览图": img_rel,
+            "原图": img_rel,
+            "检索": f'{anm_id} {cid} {cat_zh} {name_zh} 二次元 动漫 {" ".join(tags_zh)} {x["キーワード"]}',
+        })
+
+if costume_out:
+    costume_out.extend(anime_out)
     with open(os.path.join(DATA, "costume-zh.json"), "w", encoding="utf-8") as f:
         json.dump(costume_out, f, ensure_ascii=False, indent=1)
 
+    real_count = sum(1 for x in costume_out if x["版本"] == "真人")
+    version_counts = {"真人": real_count, "二次元": len(anime_out)}
     with open(os.path.join(DATA, "costume-meta-zh.json"), "w", encoding="utf-8") as f:
         json.dump(
             {
-                "total": costume_meta["total"],
+                "total": len(costume_out),
                 "分类列表": [i18n.COSTUME_CATEGORY[c] for c in costume_meta["cats"]],
-                "各分类数量": {i18n.COSTUME_CATEGORY[k]: v for k, v in costume_meta["counts"].items()},
+                "各分类数量": {
+                    i18n.COSTUME_CATEGORY[c]: sum(1 for x in costume_out if x["分类"] == i18n.COSTUME_CATEGORY[c])
+                    for c in costume_meta["cats"]
+                },
+                "版本数量": version_counts,
             },
             f,
             ensure_ascii=False,
@@ -211,6 +259,7 @@ with open(os.path.join(DATA, "translations.csv"), "w", encoding="utf-8-sig", new
         for jp in sorted(i18n.PORTRAIT_STYLE):
             w.writerow(["人像:发型", jp or "(空/默认)", i18n.PORTRAIT_STYLE[jp], style_cnt[jp]])
 
-print(f"OK 姿势记录数: {len(pose_out)}, 服装记录数: {len(costume_out)}, 人像记录数: {len(portrait_out)}")
+real_costume_count = sum(1 for x in costume_out if x.get("版本") == "真人")
+print(f"OK 姿势记录数: {len(pose_out)}, 服装记录数: {len(costume_out)}（真人 {real_costume_count} + 二次元 {len(anime_out)}）, 人像记录数: {len(portrait_out)}")
 print("OK 合计翻译记录数:", len(pose_out) + len(costume_out) + len(portrait_out))
 

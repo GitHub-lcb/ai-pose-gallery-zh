@@ -1,0 +1,24 @@
+{
+  "project": "示例短片",
+  "size": "768x1024",
+  "fps": 24,
+  "notes": "每个镜头都会生成一段带原生音频的 mp4；lastFrame 可选，镜N的尾帧＝镜N+1的首帧可做无缝接力。",
+  "shots": [
+    {
+      "id": "S01",
+      "duration": 2,
+      "firstFrame": ".auto-gen/images/auto-20261103-112353-1005714686.png",
+      "lastFrame": ".auto-gen/images/auto-20261102-232552-2098496392.png",
+      "prompt": "Cinematic vertical shot of the woman in the reference frame. She stands in a bright studio, turns slowly toward camera, hair swaying, soft key light, gentle handheld drift. Ambient studio tone with soft piano.",
+      "audio": "soft piano, room tone"
+    },
+    {
+      "id": "S02",
+      "duration": 2,
+      "firstFrame": ".auto-gen/images/auto-20261102-232552-2098496392.png",
+      "lastFrame": null,
+      "prompt": "Close-up of the same woman, she smiles and lifts one hand to brush her hair, warm light, shallow depth of field, slow push-in. Soft ambient hum and faint piano notes.",
+      "audio": "warm pad, subtle room tone"
+    }
+  ]
+}

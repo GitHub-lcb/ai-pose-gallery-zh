@@ -162,7 +162,7 @@ class PoseGalleryNode:
 
 
 class CostumeGalleryNode:
-    """从 1,407 套穿搭服装库中选择服装参考图并输出 IMAGE 与中英文服装 Prompt。"""
+    """从 2,727 套穿搭服装库（真人 1,407 + 二次元动漫 1,320）中选择服装参考图并输出 IMAGE 与中英文服装 Prompt。"""
 
     @classmethod
     def INPUT_TYPES(cls):

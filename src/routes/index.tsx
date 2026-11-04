@@ -37,7 +37,10 @@ function DashboardPage() {
   const { recipe, togglePortrait } = useStudio()
 
   const topPortraits = portraits.filter((p) => p.热门).slice(0, 10)
-  const totalImages = posesData.items.length + costumes.length + portraits.length
+  const totalRecords = posesData.items.length + costumes.length + portraits.length
+  // 姿势（白模 + 深度各 2 张） + 服装（缩略图 + 原图） + 人像（缩略图 + 原图）
+  const totalLocalImages = posesData.items.length * 4 + costumes.length * 2 + portraits.length * 2
+  const animeCostumeCount = costumes.filter((c) => c.版本 === '二次元').length
 
   return (
     <>
@@ -47,9 +50,9 @@ function DashboardPage() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           title="总参考图"
-          value={totalImages.toLocaleString('zh-CN')}
+          value={totalRecords.toLocaleString('zh-CN')}
           icon={<LayersIcon />}
-          desc="11,568 本地高清图"
+          desc={`${totalLocalImages.toLocaleString('zh-CN')} 本地高清图`}
         />
         <StatCard
           title="动作姿势 (Pose)"
@@ -61,7 +64,7 @@ function DashboardPage() {
           title="服装穿搭 (Costume)"
           value={`${costumes.length.toLocaleString('zh-CN')} 套`}
           icon={<ShirtIcon />}
-          desc="8 大分类 · 双语标签"
+          desc={`真人 ${(costumes.length - animeCostumeCount).toLocaleString('zh-CN')} + 二次元 ${animeCostumeCount.toLocaleString('zh-CN')}`}
         />
         <StatCard
           title="人像颜值 (Portrait)"
@@ -100,7 +103,7 @@ function DashboardPage() {
         >
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">👗 服装穿搭库</h2>
-            <Badge variant="secondary">1,407</Badge>
+            <Badge variant="secondary">{costumes.length.toLocaleString('zh-CN')}</Badge>
           </div>
           <div className="mt-3 grid grid-cols-4 gap-1.5">
             {costumes.slice(0, 4).map((c) => (

@@ -15,14 +15,14 @@ const LIBRARIES = {
   },
   costume: {
     key: "costume",
-    label: "服装库 (1,407)",
+    label: "服装库 (2,727)",
     shortLabel: "服装",
     defaultId: "SPR-0001",
     titleField: "服装名称",
     primaryField: "分类",
-    secondaryField: "",
+    secondaryField: "版本",
     primaryPlaceholder: "全部穿搭大类",
-    secondaryPlaceholder: "全部细分区",
+    secondaryPlaceholder: "全部版本（真人 / 二次元）",
   },
   portrait: {
     key: "portrait",
@@ -181,7 +181,7 @@ class PoseAtlasModal {
           <div class="pca-title-group">
             <div>
               <h3 class="pca-title">AI 角色三合一参考图集 (ComfyUI 选图器)</h3>
-              <div class="pca-subtitle">4,345 张高清中文标签参考图 · 点击卡片即可填入节点</div>
+              <div class="pca-subtitle">5,665 张高清中文标签参考图 · 点击卡片即可填入节点</div>
             </div>
           </div>
           <div class="pca-tabs" id="pca-tabs"></div>
@@ -637,7 +637,7 @@ app.registerExtension({
 
       const btnLabel =
         nodeKind === "recipe"
-          ? "🎨 打开三合一选图器 (4,345张)"
+          ? "🎨 打开三合一选图器 (5,665张)"
           : `🖼️ 打开${LIBRARIES[nodeKind].shortLabel}图库选图`;
 
       this.addWidget("button", btnLabel, null, () => {
