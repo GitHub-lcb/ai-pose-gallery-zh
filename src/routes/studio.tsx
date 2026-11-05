@@ -52,6 +52,8 @@ import {
   detectComfyUi,
   fileToDataUrl,
   fetchComfyObjectInfo,
+  getRecipePromptOptions,
+  isComfyFlexibleLayout,
   parseComfyWorkflowNodes,
   PROVIDER_META,
   stitchRecipeCanvas,
@@ -113,6 +115,8 @@ function StudioPage() {
     requestAdultGenMode,
     randomCostumeVersion,
     setRandomCostumeVersion,
+    randomSlots,
+    setRandomSlotEnabled,
   } = useStudio()
   const qc = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -128,7 +132,11 @@ function StudioPage() {
   const providerCfg = apiConfig.providers[activeProvider]
 
   const activeWorkflowImages = activeProvider === 'comfyui' && recipe.workflowImagesIdentity === workflowIdentity(apiConfig.comfyuiParams.workflowJson) ? Object.values(recipe.workflowImages || {}) : []
-  const defaultPrompt = buildRecipePrompt(recipe, apiConfig.stylePreset, activeWorkflowImages)
+  // 双图模式支持「不选人像」：用服装图当人物参考，脸部自由生成
+  const promptOptions = getRecipePromptOptions(apiConfig, recipe)
+  // 本机 Qwen 2.1 模板在任意参考组合下会自动切换为「灵活参考工作流」
+  const flexibleLayout = isComfyFlexibleLayout(apiConfig, recipe)
+  const defaultPrompt = buildRecipePrompt(recipe, apiConfig.stylePreset, activeWorkflowImages, promptOptions)
   const prompt = customPrompt ?? defaultPrompt
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [extraUrlInput, setExtraUrlInput] = useState('')
@@ -279,8 +287,8 @@ function StudioPage() {
     }
   }
 
-  const missingReferences = activeProvider === 'comfyui' ? [
-    { label: '人像', node: apiConfig.comfyuiParams.portraitNodeId, image: recipe.portrait },
+  const missingReferences = activeProvider === 'comfyui' && !flexibleLayout ? [
+    { label: '人像', node: apiConfig.comfyuiParams.portraitNodeId, image: recipe.portrait ?? (promptOptions.costumeAsPerson ? recipe.costume : null) },
     { label: '服装', node: apiConfig.comfyuiParams.costumeNodeId, image: recipe.costume },
     { label: '姿势', node: apiConfig.comfyuiParams.poseNodeId, image: recipe.pose },
   ].filter((slot) => slot.node && slot.node !== 'none' && parsedComfyNodes.imageNodes.some((node) => node.id === slot.node && node.emptyValue === undefined) && !slot.image).map((slot) => slot.label) : []
@@ -370,10 +378,15 @@ function StudioPage() {
   }
 
   const handleGenerate = () => {
-    if (activeProvider === 'comfyui') {
+    if (activeProvider === 'comfyui' && !flexibleLayout) {
       const cp = apiConfig.comfyuiParams
       const workflowImages = recipe.workflowImagesIdentity === workflowIdentity(cp.workflowJson) ? recipe.workflowImages || {} : {}
-      const selected = [recipe.portrait ? cp.portraitNodeId : '', recipe.costume ? cp.costumeNodeId : '', recipe.pose ? cp.poseNodeId : '', ...Object.keys(workflowImages)].filter((id) => id && id !== 'none')
+      const selected = [
+        recipe.portrait || promptOptions.costumeAsPerson ? cp.portraitNodeId : '',
+        recipe.costume && !promptOptions.ignoreCostume ? cp.costumeNodeId : '',
+        recipe.pose ? cp.poseNodeId : '',
+        ...Object.keys(workflowImages),
+      ].filter((id) => id && id !== 'none')
       const combinationError = validateReferenceCombinations(cp.workflowJson, selected)
       if (combinationError) { toast.error(combinationError); setShowAdvanced(true); return }
     }
@@ -581,6 +594,11 @@ function StudioPage() {
                       <div className="flex items-center justify-between gap-1">
                         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                           <span className="shrink-0 text-[11px] text-muted-foreground">姿势</span>
+                          {recipe.pose.source !== 'upload' && recipe.pose.体系.includes('双人') && (
+                            <span className="shrink-0 rounded bg-fuchsia-600/10 px-1 py-0.5 text-[9px] font-medium text-fuchsia-600 dark:text-fuchsia-400">
+                              双人
+                            </span>
+                          )}
                           {recipe.pose.source !== 'upload' && (
                             <div
                               role="group"
@@ -713,6 +731,59 @@ function StudioPage() {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* 随机配方包含的参考项：人像 / 服装 / 姿势 均可选（定时任务同样生效） */}
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-background p-2.5">
+              <div className="flex min-w-0 items-start gap-2">
+                <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                  <DicesIcon className="size-3.5" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold">随机配方 · 参考项</div>
+                  <div className="text-[11px] leading-snug text-muted-foreground">
+                    勾选后随机 / 定时任务才会抽取对应槽位；关掉的槽位生成时会被忽略（支持人像 / 服装 / 姿势任意组合）
+                  </div>
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-3">
+                {(
+                  [
+                    { key: 'portrait', label: '人像' },
+                    { key: 'costume', label: '服装' },
+                    { key: 'pose', label: '姿势' },
+                  ] as const
+                ).map(({ key, label }) => (
+                  <label key={key} className="flex cursor-pointer items-center gap-1.5 text-xs font-medium select-none">
+                    <Switch
+                      size="sm"
+                      checked={randomSlots[key]}
+                      onCheckedChange={(checked) => setRandomSlotEnabled(key, checked)}
+                      aria-label={`随机配方包含${label}`}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* 双图模式不选人像 / 服装槽不参与 的提示 */}
+            {flexibleLayout && (
+              <div className="rounded-xl bg-emerald-500/10 px-3 py-2 text-[11px] leading-relaxed text-emerald-700 dark:text-emerald-400">
+                <strong>灵活参考模式：</strong>当前组合将自动使用本机 Qwen 2.1「1~3 图灵活参考」工作流，送入：
+                {[recipe.portrait && '人像', recipe.costume && '服装', recipe.pose && '姿势'].filter(Boolean).join(' + ') || '（未选择参考图）'}
+                ；未选的槽位不会参与，脸部 / 服装 / 动作按已选参考生成。
+              </div>
+            )}
+            {promptOptions.costumeAsPerson && (
+              <div className="rounded-xl bg-sky-500/10 px-3 py-2 text-[11px] leading-relaxed text-sky-700 dark:text-sky-300">
+                <strong>双图模式 · 未选人像：</strong>将使用「服装图」作为人物与服装参考，<strong>脸部由模型自由生成</strong>（不锁定身份）；如需锁定人脸请选择人像，或切换三图工作流。
+              </div>
+            )}
+            {promptOptions.ignoreCostume && (
+              <div className="rounded-xl bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+                <strong>双图模式 · 服装槽不参与：</strong>当前工作流只使用「人像 + 姿势」两张参考图；如需指定服装请切换三图工作流（服装槽已选的图不会送到模型）。
+              </div>
+            )}
 
             {/* 附加参考图列表 + 可视化拖拽/粘贴上传框 */}
             <div className="space-y-2 pt-1">

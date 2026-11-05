@@ -215,6 +215,13 @@ export type AdultGenMode = 'off' | 'mixed' | 'only'
 /** 随机配方抽取服装的版本范围（手动选择服装不受影响） */
 export type RandomCostumeVersion = 'all' | '真人' | '二次元'
 
+/** 随机配方包含哪些参考槽位（关掉的槽位在随机时会被清空，支持任意组合） */
+export interface RandomRecipeSlots {
+  portrait: boolean
+  costume: boolean
+  pose: boolean
+}
+
 /** 生图保存文件夹的授权状态 */
 export type SaveFolderPermission = 'granted' | 'prompt' | 'denied'
 

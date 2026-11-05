@@ -22,6 +22,7 @@ import {
   COMFYUI_WORKFLOW_TEMPLATES,
   DEFAULT_COMFY_PRESET,
   generateCharacterImage,
+  getRecipePromptOptions,
   isActiveGenerationAborted,
   type ComfyPresetId,
   type GenerationProgress,
@@ -59,6 +60,7 @@ import type {
   ProviderEndpointConfig,
   QwenParams,
   RandomCostumeVersion,
+  RandomRecipeSlots,
   RecipeState,
   SaveLocationState,
 } from '@/types/gallery'
@@ -70,6 +72,8 @@ const SAFE_MODE_KEY = 'pose_atlas_safe_mode_v1'
 const AUTOGEN_KEY = 'pose_atlas_autogen_config_v1'
 const ADULT_GEN_MODE_KEY = 'pose_atlas_adult_gen_mode_v1'
 const RANDOM_COSTUME_KEY = 'pose_atlas_random_costume_version_v1'
+const RANDOM_SLOTS_KEY = 'pose_atlas_random_slots_v1'
+const DEFAULT_RANDOM_SLOTS: RandomRecipeSlots = { portrait: true, costume: true, pose: true }
 
 // ============================================================================
 // 定时任务（自动随机出图）
@@ -148,7 +152,8 @@ function pickRandomRecipe(
   pools: { portraits: PortraitItem[]; costumes: CostumeItem[]; poses: PoseItem[] },
   adultMode: AdultGenMode,
   poseDepthMode: boolean,
-  costumeVersion: RandomCostumeVersion
+  costumeVersion: RandomCostumeVersion,
+  slots: RandomRecipeSlots
 ): RecipeState {
   const posePool = filterAdultPools(pools.poses, (item) => isNsfwPose(item), adultMode)
   let costumePool = filterAdultPools(pools.costumes, (item) => isNsfwCostume(item), adultMode)
@@ -158,12 +163,13 @@ function pickRandomRecipe(
   }
   const pick = <T,>(list: T[]): T | undefined =>
     list.length ? list[Math.floor(Math.random() * list.length)] : undefined
-  const pose = pick(posePool)
+  const pose = slots.pose ? pick(posePool) : undefined
   return {
     ...base,
-    portrait: pick(pools.portraits) ?? base.portrait,
-    costume: pick(costumePool) ?? base.costume,
-    pose: pose ? { ...pose, useDepth: poseDepthMode } : base.pose,
+    // 关掉的槽位在随机时清空，支持「只要服装+姿势」「只要姿势」等任意组合
+    portrait: slots.portrait ? (pick(pools.portraits) ?? null) : null,
+    costume: slots.costume ? (pick(costumePool) ?? null) : null,
+    pose: pose ? { ...pose, useDepth: poseDepthMode } : null,
   }
 }
 
@@ -351,6 +357,9 @@ interface StudioContextValue {
   /** 随机配方抽取服装的版本范围（手动选择服装不受影响） */
   randomCostumeVersion: RandomCostumeVersion
   setRandomCostumeVersion: (version: RandomCostumeVersion) => void
+  /** 随机配方包含哪些参考槽位（人像 / 服装 / 姿势 均可选，关掉的槽位随机时清空） */
+  randomSlots: RandomRecipeSlots
+  setRandomSlotEnabled: (slot: keyof RandomRecipeSlots, enabled: boolean) => void
   poseDepthMode: boolean
   setPoseDepthMode: (val: boolean) => void
   toggleRecipePoseDepth: () => void
@@ -477,6 +486,20 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       return '真人'
     }
   })
+  const [randomSlots, setRandomSlotsState] = useState<RandomRecipeSlots>(() => {
+    try {
+      const raw = localStorage.getItem(RANDOM_SLOTS_KEY)
+      if (!raw) return DEFAULT_RANDOM_SLOTS
+      const parsed = JSON.parse(raw) as Partial<RandomRecipeSlots>
+      return {
+        portrait: parsed.portrait !== false,
+        costume: parsed.costume !== false,
+        pose: parsed.pose !== false,
+      }
+    } catch {
+      return DEFAULT_RANDOM_SLOTS
+    }
+  })
   const [poseDepthMode, setPoseDepthModeState] = useState<boolean>(() => Boolean(recipe.pose?.useDepth))
 
   // 提升到根部 Provider 的生成状态，路由切换不会卸载或中断
@@ -516,6 +539,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     poseDepthMode,
     adultGenMode,
     randomCostumeVersion,
+    randomSlots,
   })
 
   useEffect(() => {
@@ -534,8 +558,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       poseDepthMode,
       adultGenMode,
       randomCostumeVersion,
+      randomSlots,
     }
-  }, [recipe, apiConfig, safeMode, poseDepthMode, adultGenMode, randomCostumeVersion])
+  }, [recipe, apiConfig, safeMode, poseDepthMode, adultGenMode, randomCostumeVersion, randomSlots])
 
   useEffect(() => {
     try {
@@ -661,6 +686,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     try {
+      localStorage.setItem(RANDOM_SLOTS_KEY, JSON.stringify(randomSlots))
+    } catch {}
+  }, [randomSlots])
+
+  useEffect(() => {
+    try {
       localStorage.setItem(ADULT_GEN_MODE_KEY, adultGenMode)
     } catch {}
   }, [adultGenMode])
@@ -724,6 +755,20 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           ? '随机配方服装：仅真人写实（避免与真人脸混搭二次元服装）'
           : '随机配方服装：仅二次元动漫（建议搭配二次元 / 2.5D 画风）'
     )
+  }
+
+  const setRandomSlotEnabled = (slot: keyof RandomRecipeSlots, enabled: boolean) => {
+    setRandomSlotsState((prev) => {
+      const next = { ...prev, [slot]: enabled }
+      if (!next.portrait && !next.costume && !next.pose) {
+        toast.error('随机配方至少要保留一个参考项（人像 / 服装 / 姿势）')
+        return prev
+      }
+      toast.success(
+        `${slot === 'portrait' ? '人像' : slot === 'costume' ? '服装' : '姿势'}：${enabled ? '已加入随机配方' : '已从随机配方移除'}`
+      )
+      return next
+    })
   }
 
   useEffect(() => {
@@ -856,24 +901,25 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
     setRecipe((prev) => ({
       ...prev,
-      portrait: portraitPool.length
-        ? portraitPool[Math.floor(Math.random() * portraitPool.length)]
-        : prev.portrait,
-      costume: costumePool.length
-        ? costumePool[Math.floor(Math.random() * costumePool.length)]
-        : prev.costume,
-      pose: posePool.length
-        ? { ...posePool[Math.floor(Math.random() * posePool.length)], useDepth: poseDepthMode }
-        : prev.pose,
+      portrait: randomSlots.portrait
+        ? portraitPool.length
+          ? portraitPool[Math.floor(Math.random() * portraitPool.length)]
+          : prev.portrait
+        : null,
+      costume: randomSlots.costume
+        ? costumePool.length
+          ? costumePool[Math.floor(Math.random() * costumePool.length)]
+          : prev.costume
+        : null,
+      pose: randomSlots.pose
+        ? posePool.length
+          ? { ...posePool[Math.floor(Math.random() * posePool.length)], useDepth: poseDepthMode }
+          : prev.pose
+        : null,
     }))
+    const slotSummary = [randomSlots.portrait && '人像', randomSlots.costume && '服装', randomSlots.pose && '姿势'].filter(Boolean).join('+')
     toast.success(
-      mode === 'off'
-        ? safeMode
-          ? '已随机抽取一套角色配方（安全模式）'
-          : '已随机抽取一套角色配方（仅 SFW 素材）'
-        : mode === 'only'
-          ? '已随机抽取一套 18+ 角色配方（仅 18+ 素材）'
-          : '已随机抽取一套角色配方（含 18+ 素材）'
+      `${mode === 'off' ? (safeMode ? '已随机抽取角色配方（安全模式）' : '已随机抽取角色配方（仅 SFW 素材）') : mode === 'only' ? '已随机抽取 18+ 角色配方（仅 18+ 素材）' : '已随机抽取角色配方（含 18+ 素材）'}（${slotSummary}）`
     )
   }
 
@@ -1097,7 +1143,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       ? 'ComfyUI 工作流'
       : pCfg.model === 'custom' ? pCfg.customModel || 'custom' : pCfg.model
     const finalPrompt =
-      overridePrompt ?? customPrompt ?? buildRecipePrompt(recipeSnapshot, configSnapshot.stylePreset, configSnapshot.activeProvider === 'comfyui' && recipeSnapshot.workflowImagesIdentity === workflowIdentity(configSnapshot.comfyuiParams.workflowJson) ? Object.values(recipeSnapshot.workflowImages || {}) : [])
+      overridePrompt ?? customPrompt ?? buildRecipePrompt(recipeSnapshot, configSnapshot.stylePreset, configSnapshot.activeProvider === 'comfyui' && recipeSnapshot.workflowImagesIdentity === workflowIdentity(configSnapshot.comfyuiParams.workflowJson) ? Object.values(recipeSnapshot.workflowImages || {}) : [], getRecipePromptOptions(configSnapshot, recipeSnapshot))
 
     isGeneratingRef.current = true
     setIsGenerating(true)
@@ -1253,7 +1299,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           pools,
           effectiveAdultMode(snapshot.safeMode, snapshot.adultGenMode),
           snapshot.poseDepthMode,
-          snapshot.randomCostumeVersion
+          snapshot.randomCostumeVersion,
+          snapshot.randomSlots
         )
       }
 
@@ -1279,7 +1326,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         nextRecipe.workflowImagesIdentity === workflowIdentity(nextConfig.comfyuiParams.workflowJson)
           ? Object.values(nextRecipe.workflowImages || {})
           : []
-      const prompt = buildRecipePrompt(nextRecipe, nextConfig.stylePreset, workflowImages)
+      const prompt = buildRecipePrompt(nextRecipe, nextConfig.stylePreset, workflowImages, getRecipePromptOptions(nextConfig, nextRecipe))
 
       engaged = true
       token = autoGenGeneratingRef.current + 1
@@ -1394,6 +1441,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       toast.error('当前没有参考图：请先选择参考图，或开启「随机配方」')
       return
     }
+    if (cfg.randomizeRecipe && !snapshot.randomSlots.portrait && !snapshot.randomSlots.costume && !snapshot.randomSlots.pose) {
+      toast.error('随机配方至少要保留一个参考项（人像 / 服装 / 姿势）')
+      return
+    }
     if (provider !== 'comfyui' && !snapshot.apiConfig.providers[provider].apiKey.trim()) {
       toast.error(`请先在「API 接口配置」中填写 ${PROVIDER_META[provider].name} 的 API Key`)
       return
@@ -1430,6 +1481,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         requestAdultGenMode,
         randomCostumeVersion,
         setRandomCostumeVersion,
+        randomSlots,
+        setRandomSlotEnabled,
         poseDepthMode,
         setPoseDepthMode,
         toggleRecipePoseDepth,

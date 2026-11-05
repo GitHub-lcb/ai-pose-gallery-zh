@@ -160,10 +160,60 @@ const FIGURE_PREFERENCE_PHOTO =
 const FIGURE_PREFERENCE_STYLIZED =
   '• 身材（默认偏好）：成年女性成熟匀称的身材，曲线自然，胸部较丰满但不夸张（符合该画风审美）；不要幼态、过度瘦弱或比例失调的身材。'
 
-export function buildRecipePrompt(recipe: RecipeState, stylePreset = 'realistic', workflowImages: ExtraReferenceImage[] = []): string {
+export interface RecipePromptOptions {
+  /** 双图模式：使用「服装图」作为人物/服装参考（不选人像，脸部由模型自由生成） */
+  costumeAsPerson?: boolean
+  /** 双图模式：服装槽不参与当前工作流（已选人像时忽略服装引用） */
+  ignoreCostume?: boolean
+  /** 无人物面部参考时，是否让模型自由生成面部（默认 true） */
+  freeFace?: boolean
+}
+
+/**
+ * 根据当前 ComfyUI 工作流推导提示词引用方式：
+ * - 本机 Qwen 2.1 双图/三图模板在参考组合不匹配时会自动切换为「灵活参考工作流」；
+ * - 固定工作流下：服装节点为 none 时，未选人像则用服装图当人物参考；已选人像则忽略服装引用。
+ */
+export function getRecipePromptOptions(config: ApiConfig, recipe: RecipeState): RecipePromptOptions {
+  const freeFace = !recipe.portrait
+  if (config.activeProvider !== 'comfyui') return { freeFace }
+  const cp = config.comfyuiParams
+  if (isComfyFlexibleLayout(config, recipe)) return { freeFace }
+  if (cp.costumeNodeId === 'none' && Boolean(cp.portraitNodeId && cp.portraitNodeId !== 'none')) {
+    if (!recipe.portrait && recipe.costume) return { costumeAsPerson: true, freeFace: true }
+    if (recipe.portrait && recipe.costume) return { ignoreCostume: true }
+  }
+  return { freeFace }
+}
+
+/** 本机 Qwen 2.1 模板在「人像/服装/姿势任意组合」时是否会自动改用灵活参考工作流 */
+export function isComfyFlexibleLayout(config: ApiConfig, recipe: RecipeState): boolean {
+  if (config.activeProvider !== 'comfyui') return false
+  const cp = config.comfyuiParams
+  if (cp.workflowPreset !== 'qwen21_local_3img' && cp.workflowPreset !== 'qwen21_local_2img') return false
+  const count = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
+  if (count === 0) return false
+  if (cp.workflowPreset === 'qwen21_local_3img') return count < 3
+  return count > 2 || (count === 2 && Boolean(recipe.portrait && recipe.costume))
+}
+
+export function buildRecipePrompt(
+  recipe: RecipeState,
+  stylePreset = 'realistic',
+  workflowImages: ExtraReferenceImage[] = [],
+  options: RecipePromptOptions = {}
+): string {
+  const { costumeAsPerson = false, ignoreCostume = false, freeFace: freeFaceOption = true } = options
+  const portrait = costumeAsPerson ? null : recipe.portrait
+  const costume = ignoreCostume ? null : recipe.costume
   const styleInfo = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.realistic
   const isPhoto = PHOTO_STYLES.has(stylePreset)
-  const faceless = !recipe.portrait && !workflowImages.some((image) => image.role === 'character_sheet') && Boolean(recipe.costume && recipe.pose)
+  // 没有人物面部参考时让模型自由生成面部（不再默认生成无脸人台）
+  const freeFace = freeFaceOption && !portrait && !workflowImages.some((image) => image.role === 'character_sheet') && Boolean(costume || recipe.pose)
+  // 「双人缠绵」姿势参考里是两位人物，提示词必须显式要求画出两个人，否则模型容易合并成单人
+  const isPairPose = Boolean(
+    recipe.pose && recipe.pose.source !== 'upload' && recipe.pose.体系.includes('双人')
+  )
   const clauses: string[] = []
   let idx = 1
   let costumeIdx = 0
@@ -173,29 +223,40 @@ export function buildRecipePrompt(recipe: RecipeState, stylePreset = 'realistic'
     idx++
   })
 
-  if (recipe.portrait) {
+  if (portrait) {
     const hairDesc =
-      recipe.portrait.发型名称 && recipe.portrait.发型名称 !== '标准基础款'
-        ? recipe.portrait.标题
-        : recipe.portrait.发长
+      portrait.发型名称 && portrait.发型名称 !== '标准基础款'
+        ? portrait.标题
+        : portrait.发长
     const skin = '人物的肤色必须与图一人物一致，所有裸露皮肤（包括服装镂空处露出的皮肤）必须与脸部肤色统一，统一后的肤色与质感按风格要求呈现。'
-    const outfit = recipe.costume ? '' : '保留图1人物原有可见服装与配饰，不复制姿势参考图的服装或白模外观。'
+    const outfit = costume ? '' : '保留图1人物原有可见服装与配饰，不复制姿势参考图的服装或白模外观。'
     clauses.push(
-      recipe.portrait.source === 'upload'
+      portrait.source === 'upload'
         ? `• 人物：图${idx}中的人物，保持其脸型、五官、发型和发色一致。${skin}${outfit}`
         : `• 人物：图${idx}中的人物，保持其脸型、五官、发型（${hairDesc}）和发色一致。${skin}${outfit}`
     )
     idx++
   }
-  if (recipe.costume) {
+  if (costume) {
     costumeIdx = idx
-    clauses.push(
-      recipe.costume.source === 'upload'
-        ? `• 服装：让人物穿上图${idx}中展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
-        : `• 服装：让人物穿上图${idx}中展示的整套服装和配饰（参考名称：${recipe.costume.服装名称}），每件单品的颜色、款式、面料与配饰都以图${idx}为准，名称仅作辅助说明。`
-    )
+    if (costumeAsPerson) {
+      clauses.push(
+        costume.source === 'upload'
+          ? `• 服装（图${idx}，作为人物与服装参考）：图${idx} 没有人脸，仅展示整套服装与配饰；请生成一位成年女性穿上图${idx}展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
+          : `• 服装（图${idx}，作为人物与服装参考）：图${idx} 没有人脸，仅展示整套服装与配饰（参考名称：${costume.服装名称}）；请生成一位成年女性穿上图${idx}展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准，名称仅作辅助说明。`
+      )
+      clauses.push(
+        '• 人物（自由生成）：本组合不提供人脸参考；请为这套服装生成一位面部自然、与画风匹配的成年女性（五官清晰、左右对称、比例自然、肤色统一），不要复制任何特定真人身份。'
+      )
+    } else {
+      clauses.push(
+        costume.source === 'upload'
+          ? `• 服装：让人物穿上图${idx}中展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
+          : `• 服装：让人物穿上图${idx}中展示的整套服装和配饰（参考名称：${costume.服装名称}），每件单品的颜色、款式、面料与配饰都以图${idx}为准，名称仅作辅助说明。`
+      )
+    }
     // 动漫库服装是 2D 线稿/插画，真人照片风格下需转译为真实材质，避免「真人脸 + 动漫平涂服装」拼贴感
-    if (recipe.costume.版本 === '二次元' && recipe.costume.source !== 'upload') {
+    if (costume.版本 === '二次元' && costume.source !== 'upload') {
       clauses.push(
         isPhoto
           ? `• 动漫服装转译（重要）：图${costumeIdx} 是二次元动漫风格的服装插画，仅用于参考套装的设计、配色、图案与配饰；请把它转译为真实面料、真实剪裁与自然褶皱的成品服装穿在人物身上，保留款式、颜色与配饰；不要保留动漫线稿、黑色描边、平涂色块或 2D 插画质感，也不要照搬图中人台的灰色假人肤色，整体以人物照片与画风要求为准。`
@@ -210,22 +271,37 @@ export function buildRecipePrompt(recipe: RecipeState, stylePreset = 'realistic'
       ? `最终画面中的人物是真人，皮肤真实自然${wear}`
       : `人物的肤色与质感按风格要求呈现${wear}`
     clauses.push(
-      recipe.pose.source === 'upload'
-        ? `• 姿势：按照图${idx}中的人物动作和镜头角度摆姿势；仅参考姿势与构图，不复制图${idx}人物的外观与服装，${body}。`
-        : `• 姿势：按照图${idx}中人体模型的动作和镜头角度摆姿势（${recipe.pose.姿势名称}，${recipe.pose.角度}）；图${idx}只是动作示意，${body}。`
+      isPairPose
+        ? `• 姿势（双人）：图${idx} 是双人姿势参考，画面中必须同时出现两位人物；严格按照图中两人的相对站位、肢体互动与镜头角度摆姿势（${recipe.pose.姿势名称}，${recipe.pose.角度}）；图${idx} 只是动作示意，不要把两位人物合并成一个人、不要裁掉其中一人，${body}。`
+        : recipe.pose.source === 'upload'
+          ? `• 姿势：按照图${idx}中的人物动作和镜头角度摆姿势；仅参考姿势与构图，不复制图${idx}人物的外观与服装，${body}。`
+          : `• 姿势：按照图${idx}中人体模型的动作和镜头角度摆姿势（${recipe.pose.姿势名称}，${recipe.pose.角度}）；图${idx}只是动作示意，${body}。`
     )
     idx++
+    if (isPairPose) {
+      const faceRef = portrait
+        ? '两位人物的脸型、五官与发型均以图1为面部参考（可呈现为同一角色的两个角度或双胞胎设定，不要重复粘贴完全相同的脸）。'
+        : '两位人物均为成年女性，面部自然生成且气质相近，不要重复同一张脸。'
+      const pairWear = costumeIdx
+        ? `两位人物都穿上图${costumeIdx}展示的整套服装与配饰（同一套装扮，按两人分别自然贴合）。`
+        : '两位人物穿着风格统一的服装。'
+      clauses.push(
+        `• 双人构图（重要）：画面中必须同时出现两位成年女性人物，两人均完整入镜、不被裁切；${faceRef}${pairWear}两人的身高与体型比例协调，肢体互动自然，手部与肢体互不粘连。`
+      )
+    }
     // 仅对「全身 / 双人」姿势追加完整头身比约束（半身/特写通常不会整体比例失真）
     if (recipe.pose.source === 'upload' || /全身|双人/.test(recipe.pose.体系)) {
       clauses.push(isPhoto ? PROPORTION_FULLBODY_PHOTO : PROPORTION_FULLBODY_STYLIZED)
     }
   }
   // 默认身材偏好：所有带人物的生成都追加（胸部略丰满、成熟匀称），更符合用户默认期望
-  if (!faceless || recipe.costume || recipe.pose) {
+  if (portrait || costume || recipe.pose) {
     clauses.push(isPhoto ? FIGURE_PREFERENCE_PHOTO : FIGURE_PREFERENCE_STYLIZED)
   }
-  if (faceless) {
-    clauses.push('• 无脸展示：生成一位穿着参考服装的成年展示人物，脸部保持无五官的自然肤色表面，不添加眼睛、鼻子、嘴巴或具体人物身份；全身裸露皮肤的颜色统一，不照搬服装图或姿势图的灰白人台材质。')
+  if (freeFace && !costumeAsPerson) {
+    clauses.push(
+      '• 人物（自由生成）：本组合不提供人脸参考；请生成一位面部自然、与画风匹配的成年女性（五官清晰、左右对称、比例自然、肤色统一），不要复制任何特定真人身份。'
+    )
   }
   for (const reference of workflowImages.filter((image) => image.role !== 'character_sheet')) {
     clauses.push(`• 工作流参考：参考图${idx}（${reference.name || '补充参考'}）中的相关元素，具体用途以工作流要求为准。`)
@@ -243,11 +319,11 @@ export function buildRecipePrompt(recipe: RecipeState, stylePreset = 'realistic'
   }
 
   const lines = [
-    `请根据${workflowImages.some((image) => image.role === 'character_sheet') ? '提供的角色设定参考' : `提供的 ${idx - 1} 张参考图`}，生成一张完整的${faceless ? '人物穿搭展示图' : isPhoto ? '真实人物照片' : '人物图像'}：`,
+    `请根据${workflowImages.some((image) => image.role === 'character_sheet') ? '提供的角色设定参考' : `提供的 ${idx - 1} 张参考图`}，生成一张${isPairPose ? '包含两位人物的' : ''}完整的${isPhoto ? '真实人物照片' : '人物图像'}：`,
     ...clauses,
   ]
   if (styleInfo.prompt) {
-    lines.push(`• 风格：${styleInfo.prompt} ${faceless ? '人物比例协调，手部自然，脸部无五官，光影统一。' : '人物比例协调，手部与五官自然，光影统一。'}`)
+    lines.push(`• 风格：${styleInfo.prompt} 人物比例协调，手部与五官自然，光影统一。`)
   }
   lines.push('画面中没有任何文字、标志或水印。')
   return lines.join('\n')
@@ -721,6 +797,78 @@ function buildQwen21LocalWorkflow(threeImages: boolean): ComfyWorkflow {
     _meta: { title: '输出画布 Latent' },
   }
   wf['10'].inputs.latent_image = ['14', 0]
+  return wf
+}
+
+export interface FlexReference {
+  role: 'portrait' | 'costume' | 'pose'
+  /** 上传后的 ComfyUI input 文件名（生成前为占位名，仅用于结构预检） */
+  name: string
+}
+
+/**
+ * 灵活参考工作流：把「人像 / 服装 / 姿势」中被选中的 1~3 张图按顺序接入 Qwen 2.1 编码器，
+ * 输出画布比例优先跟随姿势图（没有姿势则跟随人像 / 服装），用于任意参考组合出图。
+ */
+export function buildFlexQwen21LocalWorkflow(refs: FlexReference[]): ComfyWorkflow {
+  if (refs.length === 0) throw new Error('灵活参考工作流至少需要 1 张参考图')
+  const roleLabel = (role: FlexReference['role']) => (role === 'portrait' ? '人像' : role === 'costume' ? '服装' : '姿势')
+  const wf: ComfyWorkflow = {}
+  refs.forEach((ref, index) => {
+    wf[String(index + 1)] = {
+      inputs: { image: ref.name },
+      class_type: 'LoadImage',
+      _meta: { title: `图${index + 1}：${roleLabel(ref.role)}参考` },
+    }
+  })
+  wf['4'] = {
+    inputs: { unet_name: LOCAL_QWEN21_MODELS.unet, weight_dtype: 'default' },
+    class_type: 'UNETLoader',
+    _meta: { title: '加载 Qwen Image 2.1 模型（本机 int8）' },
+  }
+  wf['6'] = { inputs: { device: 'auto', dtype: 'int8', model: ['4', 0] }, class_type: 'QwenImage21Cache' }
+  wf['7'] = { inputs: { clip_name: LOCAL_QWEN21_MODELS.clip, type: 'qwen_image', device: 'default' }, class_type: 'CLIPLoader' }
+  wf['8'] = { inputs: { vae_name: LOCAL_QWEN21_MODELS.vae }, class_type: 'VAELoader' }
+  wf['9'] = {
+    inputs: {
+      prompt: '',
+      negative_prompt: '',
+      resolution: 1024,
+      clip: ['7', 0],
+      vae: ['8', 0],
+      ...Object.fromEntries(refs.map((_, index) => [`images.image_${index + 1}`, [String(index + 1), 0]])),
+    },
+    class_type: 'TextEncodeQwenImage21',
+    _meta: { title: '提示词与多图参考编码 (Qwen 2.1 · 灵活参考)' },
+  }
+  // 画布比例优先跟随姿势图；没有姿势时依次用 人像 / 服装 的比例
+  const poseIndex = refs.findIndex((ref) => ref.role === 'pose')
+  const portraitIndex = refs.findIndex((ref) => ref.role === 'portrait')
+  const costumeIndex = refs.findIndex((ref) => ref.role === 'costume')
+  const latentIndex = poseIndex >= 0 ? poseIndex : portraitIndex >= 0 ? portraitIndex : costumeIndex
+  wf['13'] = {
+    inputs: { image: [String(latentIndex + 1), 0], upscale_method: 'lanczos', megapixels: 1.6875, resolution_steps: 32 },
+    class_type: 'ImageScaleToTotalPixels',
+    _meta: { title: '按参考图比例确定输出尺寸 (megapixels ≈ 1152×1536)' },
+  }
+  wf['14'] = { inputs: { pixels: ['13', 0], vae: ['8', 0] }, class_type: 'VAEEncode' }
+  wf['10'] = {
+    inputs: {
+      seed: 0,
+      steps: 25,
+      cfg: 1.0,
+      sampler_name: 'euler',
+      scheduler: 'simple',
+      denoise: 1.0,
+      model: ['6', 0],
+      positive: ['9', 0],
+      negative: ['9', 1],
+      latent_image: ['14', 0],
+    },
+    class_type: 'KSampler',
+  }
+  wf['15'] = { inputs: { samples: ['10', 0], vae: ['8', 0] }, class_type: 'VAEDecode' }
+  wf['16'] = { inputs: { filename_prefix: 'pose_studio/result', images: ['15', 0] }, class_type: 'SaveImage' }
   return wf
 }
 
@@ -1265,98 +1413,135 @@ async function generateWithComfyUi(params: {
   report({ stage: 'check', message: '正在检查 ComfyUI 服务与模型…' })
   await testComfyConnection(baseUrl, apiKey)
   const schemas = await fetchComfyObjectInfo(baseUrl, apiKey, cp.workflowJson)
-  const extraImageNodes = getWorkflowImages(cp.workflowJson, [cp.portraitNodeId, cp.costumeNodeId, cp.poseNodeId, cp.stitchedNodeId], schemas)
-  const extraImages = recipe.workflowImagesIdentity === workflowIdentity(cp.workflowJson) ? recipe.workflowImages || {} : {}
-  const selectedJson = applyWorkflowOverrides(cp.workflowJson, cp.parameterOverrides, schemas)
-  const check = await checkComfyWorkflow(baseUrl, apiKey, selectedJson, [
-    cp.portraitNodeId,
-    cp.costumeNodeId,
-    cp.poseNodeId,
-    cp.stitchedNodeId,
-    ...extraImageNodes.filter((node) => extraImages[node.nodeId]?.url || (node.optional && node.role === 'character_sheet')).map((node) => node.nodeId),
-  ], schemas)
-  if (!check.ok) {
-    throw new Error(`[ComfyUI] 工作流与本机不匹配：\n${check.errors.join('\n')}`)
-  }
-  const workflow: ComfyWorkflow = JSON.parse(check.fixedJson ?? selectedJson)
+  const flexLayout = isComfyFlexibleLayout(config, recipe)
+  let workflow: ComfyWorkflow
 
-  // 1. 按映射槽位上传参考图并注入节点
-  const slotUploads: Array<{ nodeId: string; src: string | null; prefix: string; label: string }> = [
-    {
-      nodeId: cp.portraitNodeId,
-      src: recipe.portrait ? recipe.portrait.原图 || recipe.portrait.缩略图 : null,
-      prefix: 'studio_portrait',
-      label: '人像',
-    },
-    {
-      nodeId: cp.costumeNodeId,
-      src: recipe.costume ? recipe.costume.预览图 || recipe.costume.原图 || recipe.costume.缩略图 : null,
-      prefix: 'studio_costume',
-      label: '服装',
-    },
-    {
-      nodeId: cp.poseNodeId,
-      src: recipe.pose ? poseImagePath(recipe.pose) : null,
-      prefix: 'studio_pose',
-      label: '姿势',
-    },
-  ]
-  const combinationError = validateReferenceCombinations(cp.workflowJson, [
-    ...slotUploads.filter((slot) => slot.src && slot.nodeId && slot.nodeId !== 'none').map((slot) => slot.nodeId),
-    ...extraImageNodes.filter((node) => extraImages[node.nodeId]?.url).map((node) => node.nodeId),
-  ])
-  if (combinationError) throw new Error(`[ComfyUI] ${combinationError}`)
+  if (flexLayout) {
+    // 灵活参考：按已选的 人像 / 服装 / 姿势 组合 1~3 张图，动态构建工作流，未选的槽位不参与
+    const flexRefs: Array<{ role: 'portrait' | 'costume' | 'pose'; src: string; prefix: string; label: string }> = []
+    if (recipe.portrait) {
+      flexRefs.push({ role: 'portrait', src: recipe.portrait.原图 || recipe.portrait.缩略图, prefix: 'studio_portrait', label: '人像' })
+    }
+    if (recipe.costume) {
+      flexRefs.push({ role: 'costume', src: recipe.costume.预览图 || recipe.costume.原图 || recipe.costume.缩略图, prefix: 'studio_costume', label: '服装' })
+    }
+    if (recipe.pose) {
+      flexRefs.push({ role: 'pose', src: poseImagePath(recipe.pose), prefix: 'studio_pose', label: '姿势' })
+    }
+    if (flexRefs.length === 0) throw new Error('[ComfyUI] 请至少选择一张参考图（人像 / 服装 / 姿势 任选）')
+    const template = buildFlexQwen21LocalWorkflow(flexRefs.map((ref) => ({ role: ref.role, name: 'flex_ref.png' })))
+    const flexCheck = await checkComfyWorkflow(baseUrl, apiKey, JSON.stringify(template), [], schemas)
+    if (!flexCheck.ok) throw new Error(`[ComfyUI] 工作流与本机不匹配：\n${flexCheck.errors.join('\n')}`)
+    workflow = JSON.parse(flexCheck.fixedJson ?? JSON.stringify(template))
+    throwIfAborted()
+    for (let index = 0; index < flexRefs.length; index += 1) {
+      const ref = flexRefs[index]
+      report({ stage: 'upload', message: `正在上传${ref.label}参考图…` })
+      workflow[String(index + 1)].inputs.image = await uploadImageToComfy(baseUrl, ref.src, ref.prefix, apiKey)
+    }
+    workflow['9'].inputs.prompt = prompt
+  } else {
+    const extraImageNodes = getWorkflowImages(cp.workflowJson, [cp.portraitNodeId, cp.costumeNodeId, cp.poseNodeId, cp.stitchedNodeId], schemas)
+    const extraImages = recipe.workflowImagesIdentity === workflowIdentity(cp.workflowJson) ? recipe.workflowImages || {} : {}
+    const selectedJson = applyWorkflowOverrides(cp.workflowJson, cp.parameterOverrides, schemas)
+    const check = await checkComfyWorkflow(baseUrl, apiKey, selectedJson, [
+      cp.portraitNodeId,
+      cp.costumeNodeId,
+      cp.poseNodeId,
+      cp.stitchedNodeId,
+      ...extraImageNodes.filter((node) => extraImages[node.nodeId]?.url || (node.optional && node.role === 'character_sheet')).map((node) => node.nodeId),
+    ], schemas)
+    if (!check.ok) {
+      throw new Error(`[ComfyUI] 工作流与本机不匹配：\n${check.errors.join('\n')}`)
+    }
+    workflow = JSON.parse(check.fixedJson ?? selectedJson)
 
-  const invalidSlots = slotUploads.filter((slot) => slot.nodeId && slot.nodeId !== 'none' && !parsedInfo.imageNodes.some((node) => node.id === slot.nodeId))
-  if (invalidSlots.length) {
-    throw new Error(`[ComfyUI] ${invalidSlots.map((slot) => slot.label).join('、')}节点映射已失效，请重新识别或选择节点`)
-  }
-  const missingSlots = slotUploads.filter((slot) => slot.nodeId && slot.nodeId !== 'none' && !slot.src && parsedInfo.imageNodes.find((node) => node.id === slot.nodeId)?.emptyValue === undefined)
-  if (missingSlots.length) {
-    throw new Error(`[ComfyUI] 请先选择或上传：${missingSlots.map((slot) => slot.label).join('、')}`)
-  }
+    // 1. 按映射槽位上传参考图并注入节点
+    // 双图模式（服装节点为 none）且未选人像时：用服装图作为「人物/服装」参考，脸部由模型自由生成
+    const costumeAsPersonUpload = Boolean(
+      !recipe.portrait && recipe.costume && cp.costumeNodeId === 'none' && cp.portraitNodeId !== 'none'
+    )
+    const slotUploads: Array<{ nodeId: string; src: string | null; prefix: string; label: string }> = [
+      {
+        nodeId: cp.portraitNodeId,
+        src: recipe.portrait
+          ? recipe.portrait.原图 || recipe.portrait.缩略图
+          : costumeAsPersonUpload && recipe.costume
+            ? recipe.costume.预览图 || recipe.costume.原图 || recipe.costume.缩略图
+            : null,
+        prefix: 'studio_portrait',
+        label: costumeAsPersonUpload ? '人物/服装' : '人像',
+      },
+      {
+        nodeId: cp.costumeNodeId,
+        src: recipe.costume ? recipe.costume.预览图 || recipe.costume.原图 || recipe.costume.缩略图 : null,
+        prefix: 'studio_costume',
+        label: '服装',
+      },
+      {
+        nodeId: cp.poseNodeId,
+        src: recipe.pose ? poseImagePath(recipe.pose) : null,
+        prefix: 'studio_pose',
+        label: '姿势',
+      },
+    ]
+    const combinationError = validateReferenceCombinations(cp.workflowJson, [
+      ...slotUploads.filter((slot) => slot.src && slot.nodeId && slot.nodeId !== 'none').map((slot) => slot.nodeId),
+      ...extraImageNodes.filter((node) => extraImages[node.nodeId]?.url).map((node) => node.nodeId),
+    ])
+    if (combinationError) throw new Error(`[ComfyUI] ${combinationError}`)
 
-  throwIfAborted()
-  for (const slot of slotUploads) {
-    if (!slot.nodeId || slot.nodeId === 'none' || !workflow[slot.nodeId]?.inputs) continue
-    if (!slot.src) {
-      const emptyValue = parsedInfo.imageNodes.find((node) => node.id === slot.nodeId)?.emptyValue
-      if (emptyValue !== undefined) {
-        workflow[slot.nodeId].inputs.image = emptyValue
+    const invalidSlots = slotUploads.filter((slot) => slot.nodeId && slot.nodeId !== 'none' && !parsedInfo.imageNodes.some((node) => node.id === slot.nodeId))
+    if (invalidSlots.length) {
+      throw new Error(`[ComfyUI] ${invalidSlots.map((slot) => slot.label).join('、')}节点映射已失效，请重新识别或选择节点`)
+    }
+    const missingSlots = slotUploads.filter((slot) => slot.nodeId && slot.nodeId !== 'none' && !slot.src && parsedInfo.imageNodes.find((node) => node.id === slot.nodeId)?.emptyValue === undefined)
+    if (missingSlots.length) {
+      throw new Error(`[ComfyUI] 请先选择或上传：${missingSlots.map((slot) => slot.label).join('、')}`)
+    }
+
+    throwIfAborted()
+    for (const slot of slotUploads) {
+      if (!slot.nodeId || slot.nodeId === 'none' || !workflow[slot.nodeId]?.inputs) continue
+      if (!slot.src) {
+        const emptyValue = parsedInfo.imageNodes.find((node) => node.id === slot.nodeId)?.emptyValue
+        if (emptyValue !== undefined) {
+          workflow[slot.nodeId].inputs.image = emptyValue
+          continue
+        }
+        throw new Error(`当前工作流需要「${slot.label}」参考图（节点 ${slot.nodeId}），请先在图库中选择`)
+      }
+      throwIfAborted()
+      report({ stage: 'upload', message: `正在上传${slot.label}参考图…` })
+      workflow[slot.nodeId].inputs.image = await uploadImageToComfy(baseUrl, slot.src, slot.prefix, apiKey)
+    }
+
+    for (const node of extraImageNodes) {
+      const image = extraImages[node.nodeId]
+      if (!image?.url) {
+        if (node.optional && node.role === 'character_sheet') workflow[node.nodeId].inputs.image = '无'
         continue
       }
-      throw new Error(`当前工作流需要「${slot.label}」参考图（节点 ${slot.nodeId}），请先在图库中选择`)
+      throwIfAborted()
+      report({ stage: 'upload', message: `正在上传${node.label}…` })
+      workflow[node.nodeId].inputs.image = await uploadImageToComfy(baseUrl, image.url, 'studio_reference', apiKey)
     }
-    throwIfAborted()
-    report({ stage: 'upload', message: `正在上传${slot.label}参考图…` })
-    workflow[slot.nodeId].inputs.image = await uploadImageToComfy(baseUrl, slot.src, slot.prefix, apiKey)
-  }
 
-  for (const node of extraImageNodes) {
-    const image = extraImages[node.nodeId]
-    if (!image?.url) {
-      if (node.optional && node.role === 'character_sheet') workflow[node.nodeId].inputs.image = '无'
-      continue
+    if (cp.stitchedNodeId && cp.stitchedNodeId !== 'none' && workflow[cp.stitchedNodeId]?.inputs) {
+      throwIfAborted()
+      report({ stage: 'upload', message: '正在上传参考拼图…' })
+      const stitchedDataUrl = await stitchRecipeCanvas(recipe)
+      workflow[cp.stitchedNodeId].inputs.image = await uploadImageToComfy(baseUrl, stitchedDataUrl, 'studio_stitched', apiKey)
     }
-    throwIfAborted()
-    report({ stage: 'upload', message: `正在上传${node.label}…` })
-    workflow[node.nodeId].inputs.image = await uploadImageToComfy(baseUrl, image.url, 'studio_reference', apiKey)
-  }
 
-  if (cp.stitchedNodeId && cp.stitchedNodeId !== 'none' && workflow[cp.stitchedNodeId]?.inputs) {
-    throwIfAborted()
-    report({ stage: 'upload', message: '正在上传参考拼图…' })
-    const stitchedDataUrl = await stitchRecipeCanvas(recipe)
-    workflow[cp.stitchedNodeId].inputs.image = await uploadImageToComfy(baseUrl, stitchedDataUrl, 'studio_stitched', apiKey)
-  }
-
-  // 2. 注入提示词节点
-  if (cp.promptNodeId && cp.promptNodeId !== 'none' && workflow[cp.promptNodeId]?.inputs) {
-    const inputs = workflow[cp.promptNodeId].inputs
-    for (const field of ['prompt', 'text', 'string', 'positive']) {
-      if (typeof inputs[field] === 'string') {
-        inputs[field] = prompt
-        break
+    // 2. 注入提示词节点
+    if (cp.promptNodeId && cp.promptNodeId !== 'none' && workflow[cp.promptNodeId]?.inputs) {
+      const inputs = workflow[cp.promptNodeId].inputs
+      for (const field of ['prompt', 'text', 'string', 'positive']) {
+        if (typeof inputs[field] === 'string') {
+          inputs[field] = prompt
+          break
+        }
       }
     }
   }

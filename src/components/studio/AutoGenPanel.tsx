@@ -105,6 +105,7 @@ export function AutoGenPanel() {
     isGenerating,
     setPreviewUrl,
     adultGenMode,
+    randomSlots,
   } = useStudio()
 
   const [now, setNow] = useState(() => Date.now())
@@ -213,9 +214,9 @@ export function AutoGenPanel() {
         <ToggleRow
           icon={<DicesIcon className="size-4" />}
           label="随机配方"
-          desc={`每张自动更换 人像 + 服装 + 姿势（${
-            adultGenMode === 'only' ? '仅 18+ 素材' : adultGenMode === 'mixed' ? '含 18+ 素材' : 'SFW 素材'
-          }）`}
+          desc={`每张自动更换 ${
+            [randomSlots.portrait && '人像', randomSlots.costume && '服装', randomSlots.pose && '姿势'].filter(Boolean).join(' + ') || '（未启用参考项）'
+          }（${adultGenMode === 'only' ? '仅 18+ 素材' : adultGenMode === 'mixed' ? '含 18+ 素材' : 'SFW 素材'}）`}
           checked={autoGenConfig.randomizeRecipe}
           onChange={(checked) => updateAutoGenConfig({ randomizeRecipe: checked })}
         />

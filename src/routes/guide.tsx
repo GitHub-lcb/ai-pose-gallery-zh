@@ -34,7 +34,7 @@ function GuidePage() {
           <Badge>3. 姿势 + 附图</Badge>
           <h3 className="mt-2 text-sm font-semibold">动作姿势库 (1,439)</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            挑选 5 视角 3D 素体白模或深度图（Depth），结合云端 API 或本地 ComfyUI 一键生成角色立绘。
+            挑选 5 视角 3D 素体白模或深度图（Depth），结合云端 API 或本地 ComfyUI 一键生成角色立绘。本地 ComfyUI「双图姿态迁移」模式还支持不选人像：只选「服装图 + 姿势图」即可生成，脸部由模型自由生成（不锁身份）。
           </p>
         </div>
 
@@ -95,6 +95,22 @@ function GuidePage() {
           <h3 className="mt-2 text-sm font-semibold">真人脸 + 动漫服装不违和</h3>
           <p className="mt-1 text-xs text-muted-foreground">
             动漫库服装是 2D 线稿/插画：真人照片画风下会自动把它转译为真实面料、剪裁与自然褶皱（不保留线稿/平涂）；也可把画风切到「日系二次元 / 2.5D」让风格统一。「随机配方 · 服装版本」默认「仅真人写实」，可避免随机/定时任务混搭动漫服装；需要时再切「全部版本 / 仅二次元动漫」。
+          </p>
+        </div>
+
+        <div className="rounded-2xl bg-background p-4">
+          <Badge>双人姿势</Badge>
+          <h3 className="mt-2 text-sm font-semibold">双人缠绵 = 两位人物</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            「双人缠绵」姿势参考里是两位人物，生成时会自动追加双人构图约束：画面必须同时出现两位成年女性、按参考还原相对站位与肢体互动、两人都完整入镜且都穿上所选服装，不会被合并成单人；姿势槽位会显示「双人」徽标。
+          </p>
+        </div>
+
+        <div className="rounded-2xl bg-background p-4">
+          <Badge>参考项可选</Badge>
+          <h3 className="mt-2 text-sm font-semibold">人像 / 服装 / 姿势任意组合</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            三个参考槽都可以按需纳入随机配方（关掉的槽位随机时会清空），手动生成也可直接清空任意槽位；本机 ComfyUI Qwen 2.1 模板会根据已选参考自动切换为 1~3 图灵活参考工作流（未选槽位不参与，脸部由模型自由生成）；「定时任务」自动随机出图同样生效。
           </p>
         </div>
       </Section>
