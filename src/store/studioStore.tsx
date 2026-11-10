@@ -251,6 +251,7 @@ const DEFAULT_API_CONFIG: ApiConfig = {
     workflowJson: JSON.stringify(COMFYUI_WORKFLOW_TEMPLATES[DEFAULT_COMFY_PRESET].workflow, null, 2),
     ...COMFYUI_WORKFLOW_TEMPLATES[DEFAULT_COMFY_PRESET].defaults,
     randomizeSeed: true,
+    qualityMode: 'standard',
     timeoutSec: 600,
     configVersion: COMFY_CONFIG_VERSION,
   },

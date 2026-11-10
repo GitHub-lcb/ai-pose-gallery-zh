@@ -8,6 +8,7 @@ import {
   RotateCcwIcon,
   ScanSearchIcon,
   SparklesIcon,
+  TerminalIcon,
 } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -29,13 +30,44 @@ export const Route = createFileRoute('/settings')({
 const PROVIDER_ORDER: ImageProviderId[] = ['gemini', 'gpt', 'qwen', 'doubao', 'comfyui']
 
 function SettingsPage() {
-  const { apiConfig, updateApiConfig, updateProviderConfig } = useStudio()
+  const { apiConfig, updateApiConfig, updateProviderConfig, updateGptParams } = useStudio()
   const [showKey, setShowKey] = useState(false)
   const [testingComfy, setTestingComfy] = useState(false)
+  const [testingCodexGateway, setTestingCodexGateway] = useState(false)
+  const CODEX_GATEWAY_BASE = 'http://127.0.0.1:8788/v1'
 
   const pid = apiConfig.activeProvider
   const meta = PROVIDER_META[pid]
   const pCfg = apiConfig.providers[pid]
+
+  const useCodexGateway = () => {
+    updateProviderConfig('gpt', {
+      baseUrl: CODEX_GATEWAY_BASE,
+      apiKey: 'sk-local-codex',
+      model: 'gpt-image-2.6',
+    })
+    updateGptParams({ endpointMode: 'images_edits_json', size: '1024x1536', quality: 'high' })
+    // 本地图片 OpenAI 服务器无法访问，走 Codex 网关时需要 data URL（base64）
+    updateApiConfig({ imagePassMode: 'base64' })
+    toast.success('已填入本地 Codex 生图网关（记得先运行 scripts/start-codex-gateway.ps1）')
+  }
+
+  const testCodexGateway = async () => {
+    setTestingCodexGateway(true)
+    try {
+      const res = await fetch('http://127.0.0.1:8788/health', { signal: AbortSignal.timeout(5000) })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const info = await res.json()
+      if (!info?.ok) throw new Error('网关返回异常')
+      toast.success(
+        `Codex 网关可用：${info.email || info.account_masked || '本机账号'}（${info.plan_type || '未知套餐'}），默认模型 ${info.default_model}`
+      )
+    } catch {
+      toast.error('未检测到本地 Codex 生图网关：请先在终端运行 scripts/start-codex-gateway.ps1', { duration: 8000 })
+    } finally {
+      setTestingCodexGateway(false)
+    }
+  }
 
   const handleTestComfy = async () => {
     setTestingComfy(true)
@@ -130,6 +162,18 @@ function SettingsPage() {
                 </Button>
               </>
             )}
+            {pid === 'gpt' && (
+              <>
+                <Button variant="outline" size="sm" onClick={useCodexGateway}>
+                  <TerminalIcon className="size-3.5" />
+                  Codex 网关
+                </Button>
+                <Button variant="outline" size="sm" onClick={testCodexGateway} disabled={testingCodexGateway}>
+                  <ActivityIcon className="size-3.5" />
+                  {testingCodexGateway ? '检测中…' : '检测网关'}
+                </Button>
+              </>
+            )}
             <Button variant="ghost" size="sm" asChild>
               <a href={meta.docUrl} target="_blank" rel="noreferrer">
                 <ExternalLinkIcon className="size-3.5" />
@@ -158,7 +202,9 @@ function SettingsPage() {
           hint={
             pid === 'comfyui'
               ? `本地运行本站时填 /comfy（同源代理，pnpm dev 会自动探测本机 ComfyUI 端口，默认 8188，兼容 8000/8088/8189）；直连时 ComfyUI 需加启动参数 --enable-cors-header "${typeof window !== 'undefined' ? window.location.origin : '*'}"`
-              : undefined
+              : pid === 'gpt'
+                ? '本机 Codex/ChatGPT 订阅生图：先运行 scripts/start-codex-gateway.ps1，再点「Codex 网关」一键填入 http://127.0.0.1:8788/v1；订阅账号的图片安全审核会拒绝「人体人台/深度图」姿势参考，建议只用「人像+服装」或把姿势写进提示词。'
+                : undefined
           }
         >
           <Input

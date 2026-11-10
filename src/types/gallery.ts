@@ -107,6 +107,8 @@ export interface ComfyUiParams {
   poseNodeId: string
   stitchedNodeId: string
   randomizeSeed: boolean
+  /** 出图质量：standard 标准（默认，快）/ high 高质量（更多步数 + CFG + 负面词，更慢） */
+  qualityMode?: 'standard' | 'high'
   /** 单次生成最长等待秒数 */
   timeoutSec: number
   /** 配置结构版本，用于迁移旧版默认值 */
@@ -119,7 +121,7 @@ export interface GptParams {
   quality: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   inputFidelity: 'high' | 'low'
   background: 'auto' | 'opaque' | 'transparent'
-  outputFormat: 'png' | 'jpeg' | 'webp'
+  outputFormat: 'png' | 'jpeg' | 'webp' | 'gif'
   moderation: 'auto' | 'low'
 }
 

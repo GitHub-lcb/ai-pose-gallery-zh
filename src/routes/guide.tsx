@@ -34,7 +34,7 @@ function GuidePage() {
           <Badge>3. 姿势 + 附图</Badge>
           <h3 className="mt-2 text-sm font-semibold">动作姿势库 (1,439)</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            挑选 5 视角 3D 素体白模或深度图（Depth），结合云端 API 或本地 ComfyUI 一键生成角色立绘。本地 ComfyUI「双图姿态迁移」模式还支持不选人像：只选「服装图 + 姿势图」即可生成，脸部由模型自由生成（不锁身份）。
+            挑选 5 视角 3D 素体白模或深度图（Depth），结合云端 API 或本地 ComfyUI 一键生成角色立绘。本地 Qwen 2.1 支持人像 / 服装 / 姿势任意组合：常规组合沿用模板，非常规组合自动切换为 1~3 图灵活参考工作流；双图模板内部顺序为「图1=姿势、图2=人物/服装」。本地 Qwen 2.1 还会自动使用官方推荐的提示词范式（单段指令 + <code>&lt;image1/2/3&gt;</code> 标签 + 场景布光），见「提示词范式」卡片。
           </p>
         </div>
 
@@ -73,12 +73,30 @@ function GuidePage() {
         </div>
       </Section>
 
+      <Section title="提示词范式（提示词引擎）" className="@lg/section:grid-cols-2">
+        <div className="rounded-2xl bg-background p-4">
+          <Badge>本地 Qwen 2.1</Badge>
+          <h3 className="mt-2 text-sm font-semibold">官方单段指令范式（自动启用）</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            本机 ComfyUI 的 Qwen Image 2.1 链路会自动切换为官方推荐的写法：单段连续中文、用 <code>&lt;image1/2/3&gt;</code> 指向参考图、逐图声明角色来源（身份 / 服装 / 动作机位）、肯定式保留声明、并按画风主动写入场景 / 布光 / 构图（不再只写风格词，避免默认白底棚拍感）。姿势描述会按站 / 跪 / 坐 / 卧 / 双人动态生成，与所选姿势不再冲突；**背景由参考图自动驱动**：上传参考图带环境就跟随其场景氛围，素材库白模/人台没有环境信息时则按服装风格、姿势与画风光线自动生成协调的真实背景。
+          </p>
+        </div>
+
+        <div className="rounded-2xl bg-background p-4">
+          <Badge>云端 / 2509</Badge>
+          <h3 className="mt-2 text-sm font-semibold">通用分点格式（保持不变）</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Gemini / GPT Image / 云端 Qwen / 豆包与 Qwen-Image-Edit 2509 链路继续使用旧版中文分点格式（人物 / 服装 / 姿势 / 比例 / 细节 / 风格），保证云端出图行为不回归。合成台「提示词」区域顶部会显示当前使用的提示词引擎，提示词仍可手动编辑，点「重置」恢复为自动生成。
+          </p>
+        </div>
+      </Section>
+
       <Section title="出图质量（比例优化 + 质量过滤）" className="@lg/section:grid-cols-2">
         <div className="rounded-2xl bg-background p-4">
           <Badge>全身比例</Badge>
-          <h3 className="mt-2 text-sm font-semibold">头身比 + 默认身材偏好</h3>
+          <h3 className="mt-2 text-sm font-semibold">按姿势族动态约束 + 默认身材偏好</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            全身 / 双人姿势会自动在提示词中追加「约 7~7.5 头身、头部不要偏大、避免大头小身/幼态比例、躯干与四肢协调、头顶与脚部完整」等约束，减少全身照比例失真；所有带人物的生成还会追加默认身材偏好（成年女性成熟匀称、胸部略丰满但自然不夸张）。若仍不满意，可换用「上半身单人」姿势或调整画风后重试。
+            本机 Qwen 2.1 链路会按姿势族（站 / 跪 / 坐 / 俯卧 / 仰卧 / 双人 / 半身）分别生成比例、入镜范围与关节描述，不再对跪卧姿势追加「站姿」等冲突固定句；同时保留默认身材偏好（成年女性成熟匀称、胸部略丰满但自然不夸张）与正向人体结构描述（头颈肩连接、手指与关节完整）。云端链路仍沿用旧版分点约束。若仍不满意，可换用「上半身单人」姿势或调整画风后重试；本机 ComfyUI 可把「出图质量」切到「高质量」模式（更多采样步数 + 解剖负面词，更慢）。
           </p>
         </div>
 

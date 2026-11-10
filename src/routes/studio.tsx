@@ -53,6 +53,7 @@ import {
   fileToDataUrl,
   fetchComfyObjectInfo,
   getRecipePromptOptions,
+  getFlexReferenceOrder,
   isComfyFlexibleLayout,
   parseComfyWorkflowNodes,
   PROVIDER_META,
@@ -60,6 +61,7 @@ import {
   STYLE_PRESETS,
 } from '@/services/aiGenerator'
 import { poseImagePath, poseThumbPath, referenceImageUrl, uploadedReferences } from '@/lib/recipeImages'
+import { getPromptProfile, PROMPT_PROFILE_LABELS } from '@/services/recipePrompt'
 import { useStudio } from '@/store/studioStore'
 import type {
   AdultGenMode,
@@ -134,10 +136,18 @@ function StudioPage() {
   const activeWorkflowImages = activeProvider === 'comfyui' && recipe.workflowImagesIdentity === workflowIdentity(apiConfig.comfyuiParams.workflowJson) ? Object.values(recipe.workflowImages || {}) : []
   // 双图模式支持「不选人像」：用服装图当人物参考，脸部自由生成
   const promptOptions = getRecipePromptOptions(apiConfig, recipe)
+  // 本机 Qwen 2.1 模板统一走灵活参考工作流：参考图顺序 = 槽位顺序，不需要/不使用节点映射
+  const localFlexPreset =
+    activeProvider === 'comfyui' &&
+    (apiConfig.comfyuiParams.workflowPreset === 'qwen21_local_3img' || apiConfig.comfyuiParams.workflowPreset === 'qwen21_local_2img')
   // 本机 Qwen 2.1 模板在任意参考组合下会自动切换为「灵活参考工作流」
   const flexibleLayout = isComfyFlexibleLayout(apiConfig, recipe)
+  const flexOrderLabels = flexibleLayout
+    ? getFlexReferenceOrder(recipe).map((role) => (role === 'portrait' ? '人像' : role === 'costume' ? '服装' : '姿势'))
+    : []
   const defaultPrompt = buildRecipePrompt(recipe, apiConfig.stylePreset, activeWorkflowImages, promptOptions)
   const prompt = customPrompt ?? defaultPrompt
+  const promptProfile = getPromptProfile(apiConfig)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [extraUrlInput, setExtraUrlInput] = useState('')
   const [showUrlInput, setShowUrlInput] = useState(false)
@@ -769,8 +779,9 @@ function StudioPage() {
             {/* 双图模式不选人像 / 服装槽不参与 的提示 */}
             {flexibleLayout && (
               <div className="rounded-xl bg-emerald-500/10 px-3 py-2 text-[11px] leading-relaxed text-emerald-700 dark:text-emerald-400">
-                <strong>灵活参考模式：</strong>当前组合将自动使用本机 Qwen 2.1「1~3 图灵活参考」工作流，送入：
-                {[recipe.portrait && '人像', recipe.costume && '服装', recipe.pose && '姿势'].filter(Boolean).join(' + ') || '（未选择参考图）'}
+                <strong>灵活参考模式：</strong>当前组合将自动使用本机 Qwen 2.1「1~3 图灵活参考」工作流，按「
+                {flexOrderLabels.join(' → ') || '未选择参考图'}」顺序送入
+                {!recipe.portrait && recipe.pose ? '（无人物头像时姿势图优先作为构图底图，保证头部/身体完整）' : ''}
                 ；未选的槽位不会参与，脸部 / 服装 / 动作按已选参考生成。
               </div>
             )}
@@ -1075,6 +1086,27 @@ function StudioPage() {
                   </div>
                 )}
 
+                <Field label="出图质量">
+                  <Select
+                    value={apiConfig.comfyuiParams.qualityMode ?? 'standard'}
+                    onValueChange={(v) => updateComfyUiParams({ qualityMode: v as 'standard' | 'high' })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="standard">标准（速度优先）</SelectItem>
+                      <SelectItem value="high">高质量（更多步数 + CFG + 负面词，更慢）</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+
+                {localFlexPreset && flexibleLayout ? (
+                  <div className="col-span-full rounded-xl bg-sky-500/10 px-3 py-2 text-[11px] leading-relaxed text-sky-700 dark:text-sky-300">
+                    <strong>灵活参考工作流：</strong>本机 Qwen 2.1 模板按已选参考顺序（{flexOrderLabels.join(' → ')}）自动送入，未选槽位自动跳过，支持 1~3 张任意组合（画布比例优先跟随姿势图）；无需节点映射。
+                  </div>
+                ) : (
+                  <>
                 <Field label="人像图节点 (LoadImage)">
                   <Select
                     value={apiConfig.comfyuiParams.portraitNodeId}
@@ -1150,6 +1182,13 @@ function StudioPage() {
                     </SelectContent>
                   </Select>
                 </Field>
+                  </>
+                )}
+                {localFlexPreset && !flexibleLayout && apiConfig.comfyuiParams.workflowPreset === 'qwen21_local_2img' && (
+                  <div className="col-span-full rounded-xl bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+                    双图模板内部编码顺序：<strong>图1 = 姿势参考</strong>、<strong>图2 = 人物/服装参考</strong>（所以节点标题里的「图1/图2」和槽位名称看起来相反是正常的）；提示词编号已自动按实际送图顺序生成。
+                  </div>
+                )}
               </>
             )}
 
@@ -1314,8 +1353,9 @@ function StudioPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="png">png</SelectItem>
-                          <SelectItem value="webp">webp</SelectItem>
+                          <SelectItem value="webp">webp（动图需上游支持）</SelectItem>
                           <SelectItem value="jpeg">jpeg</SelectItem>
+                          <SelectItem value="gif">gif（动图，需上游/账号开放）</SelectItem>
                         </SelectContent>
                       </Select>
                     </Field>
@@ -1528,6 +1568,12 @@ function StudioPage() {
               </div>
             }
           >
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border/60 bg-muted/40 px-3 py-2">
+              <Badge variant="secondary" className="text-[11px]">
+                提示词引擎 · {PROMPT_PROFILE_LABELS[promptProfile].label}
+              </Badge>
+              <span className="text-[11px] leading-relaxed text-muted-foreground">{PROMPT_PROFILE_LABELS[promptProfile].hint}</span>
+            </div>
             <Textarea
               value={prompt}
               onChange={(e) => setCustomPrompt(e.target.value)}

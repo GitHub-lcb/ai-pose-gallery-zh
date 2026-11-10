@@ -18,6 +18,9 @@ verify_failed.txt
 # 24/7 自动生成输出（scripts/autogen.mjs）
 .auto-gen/
 
+# 本地提示词评测/实验工作目录（tmp/qwen-prompt-lab，含出图与研究报告素材）
+/tmp/
+
 # 本地/编辑器
 .workbuddy/
 .idea/

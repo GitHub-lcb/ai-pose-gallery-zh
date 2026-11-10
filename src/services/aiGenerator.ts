@@ -1,7 +1,12 @@
-import type { ApiConfig, ExtraReferenceImage, ImageProviderId, RecipeState } from '@/types/gallery'
+import type { ApiConfig, ImageProviderId, RecipeState } from '@/types/gallery'
 import { applyWorkflowOverrides, getWorkflowImages, validateReferenceCombinations, workflowIdentity, type ComfyObjectInfo } from '@/lib/comfyWorkflowParameters'
 import { poseImagePath } from '@/lib/recipeImages'
 import qwen2509ThreeImageWorkflow from '@/workflows/qwen_image_edit_2509_3img.api.json'
+import { getPromptProfile, type RecipePromptOptions } from './recipePrompt'
+
+// 提示词构建逻辑已抽到独立的纯函数模块（便于 node 直接做快照/lint 回归测试）
+export { STYLE_PRESETS, buildRecipePrompt } from './recipePrompt'
+export type { RecipePromptOptions } from './recipePrompt'
 
 export interface ProviderModelOption {
   value: string
@@ -40,6 +45,7 @@ export const PROVIDER_META: Record<
     defaultBaseUrl: 'https://api.openai.com/v1',
     docUrl: 'https://platform.openai.com/docs/guides/image-generation',
     models: [
+      { value: 'gpt-image-2.6', label: 'gpt-image-2.6（最新 · 更快）' },
       { value: 'gpt-image-2.5', label: 'gpt-image-2.5' },
       { value: 'gpt-image-2.5-sunburst', label: 'gpt-image-2.5-sunburst' },
       { value: 'gpt-image-2.5-flare', label: 'gpt-image-2.5-flare' },
@@ -93,100 +99,72 @@ export const PROVIDER_META: Record<
   },
 }
 
-export const STYLE_PRESETS: Record<string, { label: string; prompt: string }> = {
-  none: {
-    label: '无预设（跟随参考图）',
-    prompt: '',
-  },
-  realistic: {
-    label: '写实人像写真',
-    prompt: '写实商业摄影级质感，85mm 人像镜头，自然柔和光影，真实肌肤纹理与织物细节，8k 高清画质。',
-  },
-  fashion: {
-    label: '日韩杂志画报',
-    prompt: '日韩时尚穿搭杂志画报风格，干净极简摄影棚背景，高级色调，突出人物颜值与服装剪裁。',
-  },
-  film: {
-    label: '复古胶片写真',
-    prompt: '35mm 富士胶片摄影质感，轻微胶片颗粒，柔和复古暖调，自然街拍光影与电影呼吸感。',
-  },
-  semi_real: {
-    label: '2.5D 游戏原画立绘',
-    prompt: '2.5D 半写实高精度游戏角色原画，唯美厚涂光影，精致五官与华丽布料金属质感。',
-  },
-  anime: {
-    label: '日系二次元插画',
-    prompt: '日系精致二次元插画风格，细腻赛璐璐与厚涂光影过渡，动漫角色立绘质感，色彩通透干净。',
-  },
-  cel_anime: {
-    label: '新海诚感动画电影',
-    prompt: '动画电影级画面质感，清澈高饱和光影，细腻体积光与发丝高光，干净唯美的动漫色彩。',
-  },
-  manga: {
-    label: '日式黑白漫画网点',
-    prompt: '日本黑白漫画原稿风格，利落精准的G笔线稿，细腻漫画网点纸阴影与层次对比。',
-  },
-  render3d: {
-    label: '3D 次世代角色渲染',
-    prompt: 'Unreal Engine 5 / Octane Render 次世代 3D 角色渲染，细腻次表面散射肌肤材质，电影级布光。',
-  },
-  chibi_box: {
-    label: '3D 潮玩手办质感',
-    prompt: '高品质 PVC 涂装完成品手办质感，柔和摄影棚柔光箱布光，精致材质高光与微距景深。',
-  },
-  cyberpunk: {
-    label: '赛博朋克霓虹',
-    prompt: '赛博朋克科幻视觉风格，雨夜霓虹冷暖双色轮廓光，未来感材质反光与电影级氛围。',
-  },
-  concept_sheet: {
-    label: '角色设定集立绘（纯白底）',
-    prompt: '标准角色设定集全身立绘，纯白干净无杂物背景，均匀漫反射布光，清晰展示全身服装结构与配饰细节。',
-  },
+const ANATOMY_NEGATIVE =
+  '畸形的手, 多余手指, 缺失手指, 手部融合, 多余手臂, 断肢, 多脚, 缺脚, 脚部融合, 断头, 颈部错位, 头部与身体分离, 肢体粘连, 关节扭曲, 身体比例失调, 画质模糊, 低分辨率, 文字, 水印'
+
+/** 高质量模式：提高采样步数与 CFG，并启用解剖结构负面词（更慢，但复杂姿势下手/脚/颈部更稳） */
+function applyComfyQualityBoost(workflow: ComfyWorkflow): void {
+  for (const node of Object.values<any>(workflow)) {
+    if (!node?.inputs) continue
+    if (typeof node.class_type === 'string' && /KSampler/.test(node.class_type)) {
+      if (typeof node.inputs.steps === 'number') node.inputs.steps = Math.max(node.inputs.steps, 36)
+      if (typeof node.inputs.cfg === 'number') node.inputs.cfg = Math.max(node.inputs.cfg, 1.8)
+    }
+    if (typeof node.inputs.negative_prompt === 'string') node.inputs.negative_prompt = ANATOMY_NEGATIVE
+  }
 }
 
-// 按实际传入模型的图片顺序动态生成「图1 / 图2 / 图3...」明确指代，支持附加上传图片
-// 用自然语言逐项描述（人物 / 服装 / 姿势），实测比堆砌要点更能让多图编辑模型还原服装、避免照搬人体模型线条
-const PHOTO_STYLES = new Set(['realistic', 'fashion', 'film'])
-
-// 3D 素体姿势图自带「大头/长腿」的夸张人偶比例，若不显式约束，成图会照搬导致身材比例失真
-// 注意：实测生成结果最典型的问题是「头大身小 / 幼态比例」，因此强化头身比与头部大小的约束
-const PROPORTION_FULLBODY_PHOTO =
-  '• 人体比例（重要）：成年女性真实自然的全身比例（约 7~7.5 头身），头部不要偏大，头部大小与肩宽、胸腔、腰胯、四肢长度协调；避免大头小身、幼态娃娃比例、躯干过短或四肢过细；头顶与双脚均完整入镜、不被裁切，站姿与关节自然。'
-const PROPORTION_FULLBODY_STYLIZED =
-  '• 人体比例（重要）：成年角色自然比例（约 7~7.5 头身），头部不要偏大，避免大头小身 / 幼态比例，头部与躯干、四肢长度协调；按该画风的标准人物比例绘制，头顶与双脚完整入镜。'
-// 默认身材偏好：成年女性成熟身形、胸部略丰满（不夸张、不低俗），按用户偏好默认启用
-const FIGURE_PREFERENCE_PHOTO =
-  '• 身材（默认偏好）：成年女性成熟匀称的身材，肩颈与腰胯曲线自然，胸部较丰满但不夸张、与服装版型自然贴合；不要幼态、过度瘦弱或比例失调的身材。'
-const FIGURE_PREFERENCE_STYLIZED =
-  '• 身材（默认偏好）：成年女性成熟匀称的身材，曲线自然，胸部较丰满但不夸张（符合该画风审美）；不要幼态、过度瘦弱或比例失调的身材。'
-
-export interface RecipePromptOptions {
-  /** 双图模式：使用「服装图」作为人物/服装参考（不选人像，脸部由模型自由生成） */
-  costumeAsPerson?: boolean
-  /** 双图模式：服装槽不参与当前工作流（已选人像时忽略服装引用） */
-  ignoreCostume?: boolean
-  /** 无人物面部参考时，是否让模型自由生成面部（默认 true） */
-  freeFace?: boolean
+/** 灵活参考工作流中参考图的送入顺序：无人物头像时优先把姿势图作为构图底图（避免服装无头人台当底图导致成图无头） */
+export function getFlexReferenceOrder(recipe: RecipeState): Array<'portrait' | 'costume' | 'pose'> {
+  if (!recipe.portrait && recipe.pose) {
+    return recipe.costume ? ['pose', 'costume'] : ['pose']
+  }
+  const order: Array<'portrait' | 'costume' | 'pose'> = []
+  if (recipe.portrait) order.push('portrait')
+  if (recipe.costume) order.push('costume')
+  if (recipe.pose) order.push('pose')
+  return order
 }
 
-/**
- * 根据当前 ComfyUI 工作流推导提示词引用方式：
- * - 本机 Qwen 2.1 双图/三图模板在参考组合不匹配时会自动切换为「灵活参考工作流」；
- * - 固定工作流下：服装节点为 none 时，未选人像则用服装图当人物参考；已选人像则忽略服装引用。
- */
 export function getRecipePromptOptions(config: ApiConfig, recipe: RecipeState): RecipePromptOptions {
   const freeFace = !recipe.portrait
-  if (config.activeProvider !== 'comfyui') return { freeFace }
+  const profile = getPromptProfile(config)
+  if (config.activeProvider !== 'comfyui') return { freeFace, profile }
   const cp = config.comfyuiParams
-  if (isComfyFlexibleLayout(config, recipe)) return { freeFace }
-  if (cp.costumeNodeId === 'none' && Boolean(cp.portraitNodeId && cp.portraitNodeId !== 'none')) {
-    if (!recipe.portrait && recipe.costume) return { costumeAsPerson: true, freeFace: true }
-    if (recipe.portrait && recipe.costume) return { ignoreCostume: true }
+  if (isComfyFlexibleLayout(config, recipe)) {
+    // 灵活参考：实际送图顺序由 getFlexReferenceOrder 决定，提示词按该顺序生成 <imageN> 标签
+    const order = getFlexReferenceOrder(recipe)
+    return { freeFace, profile, imageOrder: order, poseFirst: order.length > 1 && order[0] === 'pose' }
   }
-  return { freeFace }
+  // 本机/bf16 的 Qwen 2.1 双图模板：编码顺序是「图1=姿势、图2=人物/服装」
+  const twoImagePoseFirst =
+    (cp.workflowPreset === 'qwen21_local_2img' || cp.workflowPreset === 'qwen21_2img') && Boolean(recipe.pose)
+  if (twoImagePoseFirst) {
+    if (!recipe.portrait && recipe.costume) {
+      return { costumeAsPerson: true, freeFace: true, poseFirst: true, profile, imageOrder: ['pose', 'costume'] }
+    }
+    if (recipe.portrait) {
+      return { poseFirst: true, profile, imageOrder: ['pose', 'portrait'] }
+    }
+  }
+  // 固定模板：三张参考图按节点 1/2/3（人像 / 服装 / 姿势）编码
+  const imageOrder: Array<'portrait' | 'costume' | 'pose'> = []
+  if (recipe.portrait) imageOrder.push('portrait')
+  if (recipe.costume) imageOrder.push('costume')
+  if (recipe.pose) imageOrder.push('pose')
+  const options: RecipePromptOptions = { freeFace, profile, imageOrder }
+  if (cp.costumeNodeId === 'none' && Boolean(cp.portraitNodeId && cp.portraitNodeId !== 'none')) {
+    if (!recipe.portrait && recipe.costume) {
+      options.costumeAsPerson = true
+      options.freeFace = true
+    } else if (recipe.portrait && recipe.costume) {
+      options.ignoreCostume = true
+    }
+  }
+  return options
 }
 
-/** 本机 Qwen 2.1 模板在「人像/服装/姿势任意组合」时是否会自动改用灵活参考工作流 */
+/** 本机 Qwen 2.1 双图/三图模板仅在参考组合不匹配固定节点时才改用「灵活参考工作流」 */
 export function isComfyFlexibleLayout(config: ApiConfig, recipe: RecipeState): boolean {
   if (config.activeProvider !== 'comfyui') return false
   const cp = config.comfyuiParams
@@ -194,139 +172,8 @@ export function isComfyFlexibleLayout(config: ApiConfig, recipe: RecipeState): b
   const count = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
   if (count === 0) return false
   if (cp.workflowPreset === 'qwen21_local_3img') return count < 3
-  return count > 2 || (count === 2 && Boolean(recipe.portrait && recipe.costume))
-}
-
-export function buildRecipePrompt(
-  recipe: RecipeState,
-  stylePreset = 'realistic',
-  workflowImages: ExtraReferenceImage[] = [],
-  options: RecipePromptOptions = {}
-): string {
-  const { costumeAsPerson = false, ignoreCostume = false, freeFace: freeFaceOption = true } = options
-  const portrait = costumeAsPerson ? null : recipe.portrait
-  const costume = ignoreCostume ? null : recipe.costume
-  const styleInfo = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.realistic
-  const isPhoto = PHOTO_STYLES.has(stylePreset)
-  // 没有人物面部参考时让模型自由生成面部（不再默认生成无脸人台）
-  const freeFace = freeFaceOption && !portrait && !workflowImages.some((image) => image.role === 'character_sheet') && Boolean(costume || recipe.pose)
-  // 「双人缠绵」姿势参考里是两位人物，提示词必须显式要求画出两个人，否则模型容易合并成单人
-  const isPairPose = Boolean(
-    recipe.pose && recipe.pose.source !== 'upload' && recipe.pose.体系.includes('双人')
-  )
-  const clauses: string[] = []
-  let idx = 1
-  let costumeIdx = 0
-
-  workflowImages.filter((image) => image.role === 'character_sheet').forEach(() => {
-    clauses.push('• 角色设定参考：提供的设定集展示同一角色的多个视角与细节，不是多个不同人物。保持角色的脸型、五官、发型、发色、肤色及服装配饰一致；只把它作为角色参考，成品布局遵循当前工作流的输出设置。')
-    idx++
-  })
-
-  if (portrait) {
-    const hairDesc =
-      portrait.发型名称 && portrait.发型名称 !== '标准基础款'
-        ? portrait.标题
-        : portrait.发长
-    const skin = '人物的肤色必须与图一人物一致，所有裸露皮肤（包括服装镂空处露出的皮肤）必须与脸部肤色统一，统一后的肤色与质感按风格要求呈现。'
-    const outfit = costume ? '' : '保留图1人物原有可见服装与配饰，不复制姿势参考图的服装或白模外观。'
-    clauses.push(
-      portrait.source === 'upload'
-        ? `• 人物：图${idx}中的人物，保持其脸型、五官、发型和发色一致。${skin}${outfit}`
-        : `• 人物：图${idx}中的人物，保持其脸型、五官、发型（${hairDesc}）和发色一致。${skin}${outfit}`
-    )
-    idx++
-  }
-  if (costume) {
-    costumeIdx = idx
-    if (costumeAsPerson) {
-      clauses.push(
-        costume.source === 'upload'
-          ? `• 服装（图${idx}，作为人物与服装参考）：图${idx} 没有人脸，仅展示整套服装与配饰；请生成一位成年女性穿上图${idx}展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
-          : `• 服装（图${idx}，作为人物与服装参考）：图${idx} 没有人脸，仅展示整套服装与配饰（参考名称：${costume.服装名称}）；请生成一位成年女性穿上图${idx}展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准，名称仅作辅助说明。`
-      )
-      clauses.push(
-        '• 人物（自由生成）：本组合不提供人脸参考；请为这套服装生成一位面部自然、与画风匹配的成年女性（五官清晰、左右对称、比例自然、肤色统一），不要复制任何特定真人身份。'
-      )
-    } else {
-      clauses.push(
-        costume.source === 'upload'
-          ? `• 服装：让人物穿上图${idx}中展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
-          : `• 服装：让人物穿上图${idx}中展示的整套服装和配饰（参考名称：${costume.服装名称}），每件单品的颜色、款式、面料与配饰都以图${idx}为准，名称仅作辅助说明。`
-      )
-    }
-    // 动漫库服装是 2D 线稿/插画，真人照片风格下需转译为真实材质，避免「真人脸 + 动漫平涂服装」拼贴感
-    if (costume.版本 === '二次元' && costume.source !== 'upload') {
-      clauses.push(
-        isPhoto
-          ? `• 动漫服装转译（重要）：图${costumeIdx} 是二次元动漫风格的服装插画，仅用于参考套装的设计、配色、图案与配饰；请把它转译为真实面料、真实剪裁与自然褶皱的成品服装穿在人物身上，保留款式、颜色与配饰；不要保留动漫线稿、黑色描边、平涂色块或 2D 插画质感，也不要照搬图中人台的灰色假人肤色，整体以人物照片与画风要求为准。`
-          : `• 动漫服装参考：图${costumeIdx} 是二次元服装插画，仅参考款式、配色与配饰；请按当前画风统一渲染为服装成品，避免线稿拼贴感，不要照搬图中人台外观。`
-      )
-    }
-    idx++
-  }
-  if (recipe.pose) {
-    const wear = costumeIdx ? `，穿着图${costumeIdx}的服装` : ''
-    const body = isPhoto
-      ? `最终画面中的人物是真人，皮肤真实自然${wear}`
-      : `人物的肤色与质感按风格要求呈现${wear}`
-    clauses.push(
-      isPairPose
-        ? `• 姿势（双人）：图${idx} 是双人姿势参考，画面中必须同时出现两位人物；严格按照图中两人的相对站位、肢体互动与镜头角度摆姿势（${recipe.pose.姿势名称}，${recipe.pose.角度}）；图${idx} 只是动作示意，不要把两位人物合并成一个人、不要裁掉其中一人，${body}。`
-        : recipe.pose.source === 'upload'
-          ? `• 姿势：按照图${idx}中的人物动作和镜头角度摆姿势；仅参考姿势与构图，不复制图${idx}人物的外观与服装，${body}。`
-          : `• 姿势：按照图${idx}中人体模型的动作和镜头角度摆姿势（${recipe.pose.姿势名称}，${recipe.pose.角度}）；图${idx}只是动作示意，${body}。`
-    )
-    idx++
-    if (isPairPose) {
-      const faceRef = portrait
-        ? '两位人物的脸型、五官与发型均以图1为面部参考（可呈现为同一角色的两个角度或双胞胎设定，不要重复粘贴完全相同的脸）。'
-        : '两位人物均为成年女性，面部自然生成且气质相近，不要重复同一张脸。'
-      const pairWear = costumeIdx
-        ? `两位人物都穿上图${costumeIdx}展示的整套服装与配饰（同一套装扮，按两人分别自然贴合）。`
-        : '两位人物穿着风格统一的服装。'
-      clauses.push(
-        `• 双人构图（重要）：画面中必须同时出现两位成年女性人物，两人均完整入镜、不被裁切；${faceRef}${pairWear}两人的身高与体型比例协调，肢体互动自然，手部与肢体互不粘连。`
-      )
-    }
-    // 仅对「全身 / 双人」姿势追加完整头身比约束（半身/特写通常不会整体比例失真）
-    if (recipe.pose.source === 'upload' || /全身|双人/.test(recipe.pose.体系)) {
-      clauses.push(isPhoto ? PROPORTION_FULLBODY_PHOTO : PROPORTION_FULLBODY_STYLIZED)
-    }
-  }
-  // 默认身材偏好：所有带人物的生成都追加（胸部略丰满、成熟匀称），更符合用户默认期望
-  if (portrait || costume || recipe.pose) {
-    clauses.push(isPhoto ? FIGURE_PREFERENCE_PHOTO : FIGURE_PREFERENCE_STYLIZED)
-  }
-  if (freeFace && !costumeAsPerson) {
-    clauses.push(
-      '• 人物（自由生成）：本组合不提供人脸参考；请生成一位面部自然、与画风匹配的成年女性（五官清晰、左右对称、比例自然、肤色统一），不要复制任何特定真人身份。'
-    )
-  }
-  for (const reference of workflowImages.filter((image) => image.role !== 'character_sheet')) {
-    clauses.push(`• 工作流参考：参考图${idx}（${reference.name || '补充参考'}）中的相关元素，具体用途以工作流要求为准。`)
-    idx++
-  }
-  for (const extra of recipe.extraImages || []) {
-    clauses.push(
-      `• 附加参考：融合图${idx}（${extra.name || '补充元素'}）中的元素、配饰、背景或光影细节。`
-    )
-    idx++
-  }
-
-  if (clauses.length === 0) {
-    return '请先选择人像/服装/姿势或上传附加参考图。'
-  }
-
-  const lines = [
-    `请根据${workflowImages.some((image) => image.role === 'character_sheet') ? '提供的角色设定参考' : `提供的 ${idx - 1} 张参考图`}，生成一张${isPairPose ? '包含两位人物的' : ''}完整的${isPhoto ? '真实人物照片' : '人物图像'}：`,
-    ...clauses,
-  ]
-  if (styleInfo.prompt) {
-    lines.push(`• 风格：${styleInfo.prompt} 人物比例协调，手部与五官自然，光影统一。`)
-  }
-  lines.push('画面中没有任何文字、标志或水印。')
-  return lines.join('\n')
+  // 双图固定模板支持「人像+姿势」或「服装+姿势」；其余组合（0/1 张、人像+服装、三张全选）走灵活参考
+  return count < 2 || count > 2 || (count === 2 && Boolean(recipe.portrait && recipe.costume))
 }
 
 export function fileToDataUrl(file: File): Promise<string> {
@@ -552,16 +399,26 @@ async function smartFetch(
   })
 }
 
+/** 根据 Base64 头部识别图片格式，避免把 GIF / WebP 动图硬编码成 PNG 导致无法预览 */
+function base64ImageDataUrl(b64: string): string {
+  const head = String(b64 || '').slice(0, 32)
+  let mime = 'image/png'
+  if (head.startsWith('R0lGOD')) mime = 'image/gif'
+  else if (head.startsWith('/9j/')) mime = 'image/jpeg'
+  else if (head.startsWith('UklGR')) mime = 'image/webp'
+  return `data:${mime};base64,${b64}`
+}
+
 function extractUniversalImage(json: any): string | null {
   // 1. OpenAI / Doubao Seedream standard: data[0].b64_json or data[0].url
-  if (json?.data?.[0]?.b64_json) return `data:image/png;base64,${json.data[0].b64_json}`
+  if (json?.data?.[0]?.b64_json) return base64ImageDataUrl(json.data[0].b64_json)
   if (json?.data?.[0]?.url) return json.data[0].url
 
   // 2. OpenAI Responses API output[].result
   if (Array.isArray(json?.output)) {
     for (const item of json.output) {
       if (item?.type === 'image_generation_call' && item?.result) {
-        return `data:image/png;base64,${item.result}`
+        return base64ImageDataUrl(item.result)
       }
     }
   }
@@ -879,12 +736,12 @@ export const COMFYUI_WORKFLOW_TEMPLATES: Record<
   { label: string; workflow: ComfyWorkflow; defaults: ComfyNodeMappings }
 > = {
   qwen21_local_3img: {
-    label: 'Qwen Image 2.1 三图合成（本机 int8 模型）· 推荐',
+    label: 'Qwen Image 2.1 灵活参考（本机 int8 模型）· 推荐',
     workflow: buildQwen21LocalWorkflow(true),
     defaults: { promptNodeId: '9', portraitNodeId: '1', costumeNodeId: '2', poseNodeId: '3', stitchedNodeId: 'none' },
   },
   qwen21_local_2img: {
-    label: 'Qwen Image 2.1 双图姿态迁移（本机 int8 模型）',
+    label: 'Qwen Image 2.1 灵活参考（本机 int8 模型·双图兼容）',
     workflow: buildQwen21LocalWorkflow(false),
     defaults: { promptNodeId: '9', portraitNodeId: '1', costumeNodeId: 'none', poseNodeId: '2', stitchedNodeId: 'none' },
   },
@@ -1417,17 +1274,17 @@ async function generateWithComfyUi(params: {
   let workflow: ComfyWorkflow
 
   if (flexLayout) {
-    // 灵活参考：按已选的 人像 / 服装 / 姿势 组合 1~3 张图，动态构建工作流，未选的槽位不参与
-    const flexRefs: Array<{ role: 'portrait' | 'costume' | 'pose'; src: string; prefix: string; label: string }> = []
-    if (recipe.portrait) {
-      flexRefs.push({ role: 'portrait', src: recipe.portrait.原图 || recipe.portrait.缩略图, prefix: 'studio_portrait', label: '人像' })
+    // 灵活参考：按「人像/服装/姿势」动态组合 1~3 张图；无人像时把姿势图放在最前作为构图底图，避免服装无头人台成为底图
+    const roleSource: Record<'portrait' | 'costume' | 'pose', { src: string; prefix: string; label: string }> = {
+      portrait: { src: recipe.portrait?.原图 || recipe.portrait?.缩略图 || '', prefix: 'studio_portrait', label: '人像' },
+      costume: {
+        src: recipe.costume?.预览图 || recipe.costume?.原图 || recipe.costume?.缩略图 || '',
+        prefix: 'studio_costume',
+        label: '服装',
+      },
+      pose: { src: recipe.pose ? poseImagePath(recipe.pose) : '', prefix: 'studio_pose', label: '姿势' },
     }
-    if (recipe.costume) {
-      flexRefs.push({ role: 'costume', src: recipe.costume.预览图 || recipe.costume.原图 || recipe.costume.缩略图, prefix: 'studio_costume', label: '服装' })
-    }
-    if (recipe.pose) {
-      flexRefs.push({ role: 'pose', src: poseImagePath(recipe.pose), prefix: 'studio_pose', label: '姿势' })
-    }
+    const flexRefs = getFlexReferenceOrder(recipe).map((role) => ({ role, ...roleSource[role] }))
     if (flexRefs.length === 0) throw new Error('[ComfyUI] 请至少选择一张参考图（人像 / 服装 / 姿势 任选）')
     const template = buildFlexQwen21LocalWorkflow(flexRefs.map((ref) => ({ role: ref.role, name: 'flex_ref.png' })))
     const flexCheck = await checkComfyWorkflow(baseUrl, apiKey, JSON.stringify(template), [], schemas)
@@ -1545,6 +1402,9 @@ async function generateWithComfyUi(params: {
       }
     }
   }
+
+  // 高质量模式：复杂姿势下手/脚/颈部更稳（更慢）
+  if (cp.qualityMode === 'high') applyComfyQualityBoost(workflow)
 
   // 3. 随机化种子
   if (cp.randomizeSeed) {

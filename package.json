@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "check:prompts": "node scripts/check-prompts.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
