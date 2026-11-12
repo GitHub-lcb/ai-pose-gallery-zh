@@ -117,7 +117,7 @@ export interface ComfyUiParams {
 
 export interface GptParams {
   endpointMode: 'images_edits_json' | 'images_edits' | 'responses' | 'chat'
-  size: 'auto' | '1024x1536' | '1024x1024' | '1536x1024'
+  size: 'auto' | '1024x1536' | '1024x1024' | '1536x1024' | '2048x1152'
   quality: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   inputFidelity: 'high' | 'low'
   background: 'auto' | 'opaque' | 'transparent'
@@ -146,12 +146,22 @@ export interface DoubaoParams {
   responseFormat: 'b64_json' | 'url'
 }
 
+/** 画面人数：1 = 单人（默认）；2~9 = 群像模式（服装相似、人脸不同、姿势不同） */
+export type CharacterCount = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+
+/** 提示词风格：concise = 参考图优先（默认，只写必要绑定）；detailed = 保留完整约束 */
+export type PromptVerbosity = 'concise' | 'detailed'
+
 export interface ApiConfig {
   activeProvider: ImageProviderId
   imagePassMode: ImagePassMode
   useProxy: boolean
   stylePreset: string
   sendStitchedSheet: boolean
+  /** 画面人数：1~5，>1 时自动启用群像提示词 */
+  characterCount: CharacterCount
+  /** 提示词风格：默认简洁（人脸/服装/姿势由参考图表达，不再长篇描述） */
+  promptVerbosity: PromptVerbosity
   providers: Record<ImageProviderId, ProviderEndpointConfig>
   gptParams: GptParams
   geminiParams: GeminiParams

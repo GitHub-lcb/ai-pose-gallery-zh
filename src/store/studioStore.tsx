@@ -1,7 +1,7 @@
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { costumesQuery, isNsfwCostume, isNsfwPose, portraitsQuery, posesQuery } from '@/api/gallery'
+import { codexGatewayRecipeIssue, costumesQuery, isGatewayUnsafeCostume, isNsfwCostume, isNsfwPose, portraitsQuery, posesQuery } from '@/api/gallery'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +24,7 @@ import {
   generateCharacterImage,
   getRecipePromptOptions,
   isActiveGenerationAborted,
+  isLocalCodexGateway,
   type ComfyPresetId,
   type GenerationProgress,
   PROVIDER_META,
@@ -153,10 +154,15 @@ function pickRandomRecipe(
   adultMode: AdultGenMode,
   poseDepthMode: boolean,
   costumeVersion: RandomCostumeVersion,
-  slots: RandomRecipeSlots
+  slots: RandomRecipeSlots,
+  gatewaySafe = false
 ): RecipeState {
-  const posePool = filterAdultPools(pools.poses, (item) => isNsfwPose(item), adultMode)
+  const posePool = filterAdultPools(pools.poses, (item) => isNsfwPose(item), adultMode).filter(
+    (item) => !gatewaySafe || !isNsfwPose(item)
+  )
   let costumePool = filterAdultPools(pools.costumes, (item) => isNsfwCostume(item), adultMode)
+  // 本机 Codex 订阅网关的图片审核会直接拒绝泳装类参考图（实测），随机配方时额外剔除，避免必然失败
+  if (gatewaySafe) costumePool = costumePool.filter((item) => !isGatewayUnsafeCostume(item))
   // 随机配方的服装版本范围（手动选择服装不受影响）
   if (costumeVersion !== 'all') {
     costumePool = costumePool.filter((item) => (item.版本 ?? '真人') === costumeVersion)
@@ -187,6 +193,8 @@ const DEFAULT_API_CONFIG: ApiConfig = {
   useProxy: false,
   stylePreset: 'realistic',
   sendStitchedSheet: false,
+  characterCount: 1,
+  promptVerbosity: 'concise',
   providers: {
     gemini: {
       baseUrl: PROVIDER_META.gemini.defaultBaseUrl,
@@ -320,11 +328,22 @@ function mergeStoredConfig(raw: unknown): ApiConfig {
     storedVer < 3
       ? shouldEnableProxyByDefault(activeProvider)
       : (obj.useProxy ?? shouldEnableProxyByDefault(activeProvider))
+  const storedCount = Number(obj.characterCount)
+  const characterCount =
+    Number.isInteger(storedCount) && storedCount >= 1 && storedCount <= 9
+      ? (storedCount as ApiConfig['characterCount'])
+      : DEFAULT_API_CONFIG.characterCount
+  const promptVerbosity: ApiConfig['promptVerbosity'] =
+    obj.promptVerbosity === 'detailed' || obj.promptVerbosity === 'concise'
+      ? obj.promptVerbosity
+      : DEFAULT_API_CONFIG.promptVerbosity
   return {
     ...DEFAULT_API_CONFIG,
     ...obj,
     activeProvider,
     useProxy,
+    characterCount,
+    promptVerbosity,
     providers: {
       gemini: { ...DEFAULT_API_CONFIG.providers.gemini, ...obj.providers?.gemini },
       gpt: { ...DEFAULT_API_CONFIG.providers.gpt, ...obj.providers?.gpt },
@@ -806,7 +825,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const toggleCostume = (item: CostumeItem) => {
     setRecipe((r) => {
       const remove = r.costume?.id === item.id
-      const isPhotoStyle = ['realistic', 'fashion', 'film'].includes(apiConfig.stylePreset)
+      const isPhotoStyle = ['realistic', 'fashion', 'film', 'wallpaper'].includes(apiConfig.stylePreset)
       toast.success(
         remove
           ? '已移除服装'
@@ -893,34 +912,17 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   const randomizeRecipe = (pools: { portraits?: PortraitItem[]; costumes?: CostumeItem[]; poses?: PoseItem[] }) => {
     const mode = effectiveAdultMode(safeMode, adultGenMode)
-    const posePool = filterAdultPools(pools.poses || [], (item) => isNsfwPose(item), mode)
-    let costumePool = filterAdultPools(pools.costumes || [], (item) => isNsfwCostume(item), mode)
-    if (randomCostumeVersion !== 'all') {
-      costumePool = costumePool.filter((item) => (item.版本 ?? '真人') === randomCostumeVersion)
+    // 本机 Codex 订阅网关：随机池先过滤审核高风险素材；万一仍抽到，再自动随机一次（最多 3 次）
+    const gatewaySafe = isLocalCodexGateway(apiConfig)
+    const pickPools = { portraits: pools.portraits || [], costumes: pools.costumes || [], poses: pools.poses || [] }
+    let candidate = pickRandomRecipe(recipe, pickPools, mode, poseDepthMode, randomCostumeVersion, randomSlots, gatewaySafe)
+    for (let i = 0; i < 2 && gatewaySafe && codexGatewayRecipeIssue(candidate); i++) {
+      candidate = pickRandomRecipe(candidate, pickPools, mode, poseDepthMode, randomCostumeVersion, randomSlots, true)
     }
-    const portraitPool = pools.portraits || []
-
-    setRecipe((prev) => ({
-      ...prev,
-      portrait: randomSlots.portrait
-        ? portraitPool.length
-          ? portraitPool[Math.floor(Math.random() * portraitPool.length)]
-          : prev.portrait
-        : null,
-      costume: randomSlots.costume
-        ? costumePool.length
-          ? costumePool[Math.floor(Math.random() * costumePool.length)]
-          : prev.costume
-        : null,
-      pose: randomSlots.pose
-        ? posePool.length
-          ? { ...posePool[Math.floor(Math.random() * posePool.length)], useDepth: poseDepthMode }
-          : prev.pose
-        : null,
-    }))
+    setRecipe(candidate)
     const slotSummary = [randomSlots.portrait && '人像', randomSlots.costume && '服装', randomSlots.pose && '姿势'].filter(Boolean).join('+')
     toast.success(
-      `${mode === 'off' ? (safeMode ? '已随机抽取角色配方（安全模式）' : '已随机抽取角色配方（仅 SFW 素材）') : mode === 'only' ? '已随机抽取 18+ 角色配方（仅 18+ 素材）' : '已随机抽取角色配方（含 18+ 素材）'}（${slotSummary}）`
+      `${mode === 'off' ? (safeMode ? '已随机抽取角色配方（安全模式）' : '已随机抽取角色配方（仅 SFW 素材）') : mode === 'only' ? '已随机抽取 18+ 角色配方（仅 18+ 素材）' : '已随机抽取角色配方（含 18+ 素材）'}（${slotSummary}）${gatewaySafe ? ' · 订阅网关已跳过审核风险素材' : ''}`
     )
   }
 
@@ -1295,20 +1297,41 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       let nextConfig = snapshot.apiConfig
 
       if (cfg.randomizeRecipe && pools) {
-        nextRecipe = pickRandomRecipe(
-          nextRecipe,
-          pools,
-          effectiveAdultMode(snapshot.safeMode, snapshot.adultGenMode),
-          snapshot.poseDepthMode,
-          snapshot.randomCostumeVersion,
-          snapshot.randomSlots
-        )
+        const poolSet = pools
+        const gatewaySafe = isLocalCodexGateway(snapshot.apiConfig)
+        const pick = () =>
+          pickRandomRecipe(
+            nextRecipe,
+            poolSet,
+            effectiveAdultMode(snapshot.safeMode, snapshot.adultGenMode),
+            snapshot.poseDepthMode,
+            snapshot.randomCostumeVersion,
+            snapshot.randomSlots,
+            gatewaySafe
+          )
+        nextRecipe = pick()
+        // 订阅网关：抽到的配方若仍含高风险素材，自动再随机一次（最多 3 次）
+        for (let i = 0; i < 2 && gatewaySafe && codexGatewayRecipeIssue(nextRecipe); i++) {
+          nextRecipe = pick()
+        }
       }
 
       if (cfg.randomizeStyle) {
         const styleKeys = Object.keys(STYLE_PRESETS).filter((key) => key !== 'none')
         if (styleKeys.length) {
-          nextConfig = { ...nextConfig, stylePreset: styleKeys[Math.floor(Math.random() * styleKeys.length)] }
+          const stylePreset = styleKeys[Math.floor(Math.random() * styleKeys.length)]
+          nextConfig = { ...nextConfig, stylePreset }
+          // 随机到桌面壁纸画风时同步切横版 + high，避免自动任务出竖版（网关 16:9 / 官方 3:2）
+          if (stylePreset === 'wallpaper' && nextConfig.activeProvider === 'gpt') {
+            nextConfig = {
+              ...nextConfig,
+              gptParams: {
+                ...nextConfig.gptParams,
+                size: isLocalCodexGateway(nextConfig) ? '2048x1152' : '1536x1024',
+                quality: 'high',
+              },
+            }
+          }
         }
       }
 

@@ -41,14 +41,23 @@ sub2api 的图片转发路径（`backend/internal/service/openai_images*.go`）�
 
 2. 启动网关（任选一种）：
 
+   **方式 A（推荐，应用内一键启动）**：启动本站 `pnpm dev`（或 `pnpm preview`），打开「API 接口配置」→ **OpenAI GPT Image** → 点「**启动网关**」：
+
+   - 本地开发服务器会在后台拉起 `scripts/codex-image-gateway.mjs`，自动读取 `~/.codex/auth.json` 并继承 Windows 系统代理；
+   - 启动成功后自动填入 Base URL / API Key / 默认模型 / 端点模式 / base64 传参，按钮变为「**停止网关**」，可随时手动停止；
+   - 网关日志会输出到开发服务器终端；由开发服务器拉起的网关会随 `pnpm dev` 退出/重启而停止；
+   - 该控制接口只在本机 Vite 开发服务器（dev / preview）下存在，并且只接受本机回环请求；线上 Cloudflare 部署没有该接口，请用方式 B。
+
+   **方式 B（手动脚本，不启动本站时也可用）**：
+
    ```powershell
-   # 方式 A：项目根目录运行
+   # 项目根目录运行
    ./scripts/start-codex-gateway.ps1
    # 自定义端口 / 模型：
    # ./scripts/start-codex-gateway.ps1 -Port 8790 -Model gpt-image-2.6
    ```
 
-   > 方式 B：**双击桌面启动器** `启动 Codex 生图网关.cmd`（内部调用同一个脚本）。
+   > 方式 C：**双击桌面启动器** `启动 Codex 生图网关.cmd`（内部调用同一个脚本）。
    > 脚本兼容 **Windows PowerShell 5.1** 与 **PowerShell 7+**，全部提示为 ASCII，避免旧版 PowerShell 读取 UTF-8 中文脚本时的解析错误。
 
    看到以下输出即成功：
@@ -58,7 +67,7 @@ sub2api 的图片转发路径（`backend/internal/service/openai_images*.go`）�
    [gateway] credentials: C:\Users\xxx\.codex\auth.json
    ```
 
-3. 在「API 接口配置」→ **OpenAI GPT Image** 中填写（或直接点 **「Codex 网关」** 一键填入）：
+3. 在「API 接口配置」→ **OpenAI GPT Image** 中填写（方式 A 会启动成功后自动填好；也可点 **「Codex 网关」** 一键填入）：
 
    | 配置项 | 值 |
    | --- | --- |
@@ -73,7 +82,8 @@ sub2api 的图片转发路径（`backend/internal/service/openai_images*.go`）�
 ### 常见问题
 
 - **PowerShell 报「意外的标记 / 字符串缺少终止符」**：旧版脚本使用了 PowerShell 7 专属语法（`?.`、三元运算）且中文注释在 Windows PowerShell 5.1 下会被按 ANSI 解析。现已改为纯 ASCII + PS 5.1 兼容写法；更新后再运行即可。
-- **端口被占用**：默认 8788；若被占用，用 `./scripts/start-codex-gateway.ps1 -Port 8790`，并把应用里的 Base URL 同步改成 `http://127.0.0.1:8790/v1`。
+- **端口被占用**：默认 8788。用方式 A 时可先设置环境变量 `$env:CODEX_GATEWAY_PORT='8790'` 再启动 `pnpm dev`（应用会自动使用新端口并填入）；用方式 B 时改用 `./scripts/start-codex-gateway.ps1 -Port 8790`，并把应用里的 Base URL 同步改成 `http://127.0.0.1:8790/v1`。
+- **「启动网关」按钮不可用 / 报错**：该按钮依赖本站本地开发服务器（`pnpm dev` / `pnpm preview`），线上 Cloudflare 部署没有该接口，请改用方式 B；提示凭据缺失时先运行 `codex login`；提示端口被占用时按上一条换端口或停止占用程序。
 - **控制台中文乱码**：桌面启动器已执行 `chcp 65001`；若仍乱码，按窗口里的 Base URL / 模型信息操作即可，不影响功能。
 - **桌面启动器**：`C:\Users\<你>\Desktop\启动 Codex 生图网关.cmd`；如果项目目录移动了，右键编辑它、把里面的路径改成新位置即可。
 
@@ -88,12 +98,15 @@ sub2api 的图片转发路径（`backend/internal/service/openai_images*.go`）�
 
 ## 重要限制（实测）
 
-- **姿势参考图会被 OpenAI 图片安全审核拒绝**：无论 3D 白模还是深度图，实测都会返回
-  `Your request was rejected by the safety system ... safety_violations=[sexual]`。
+- **触发图片安全审核的是「参考图内容」，不是姿势白模**（2026-11 实测）：订阅账号的审核会检查参考图，结果如下：
+  - ✅ 3D 素体白模姿势图、灰度深度图（Depth Map）可以正常通过（配合中性提示词）；
+  - ❌ 泳装 / 内衣 / 性感穿搭类服饰参考图会被直接拒绝：`Your request was rejected by the safety system ... safety_violations=[sexual]`，即使提示词只写「米色长裙、正面站立」这类中性描述也一样。
   因此使用 Codex 网关时：
-  - ✅ 支持「人像 + 服装」、仅服装、纯文字生成、图片编辑；
-  - ❌ 不要选「姿势」参考图；如需要姿势，把姿势写进提示词（例如「后仰坐・单膝立起，正面视角」），或改用本地 ComfyUI / 官方 API Key（`gpt-image-*` API Key 模式）。
-- 订阅账号的图片生成受 ChatGPT 套餐配额与安全策略约束，成人/性感内容会被拒绝。
+  - ✅ 支持「人像 + 服装 + 姿势（白模/深度）」三图组合、仅服装、纯文字生成、图片编辑，推荐 SFW 日常服装；
+  - ❌ 泳装 / 内衣 / 性感系 / 双人缠绵素材会被上游拒绝：应用**生成前会校验**——随机配方 / 定时任务命中高风险素材时会自动再随机一次；手动选中的高风险素材会提示更换；
+  - 应用已为本机网关自动启用**中性提示词范式**（去掉胸部 / 裸露 / 腰胯等敏感修饰；在「AI 角色合成台 → 3. 提示词」区的「提示词引擎」标签可看到当前范式），并在「随机配方 / 定时任务」的随机池中跳过泳装类服装；如仍被拒，优先更换人像参考或改用官方 OpenAI API Key。
+- 订阅账号的图片生成受 ChatGPT 套餐配额与安全策略约束，成人/性感内容大概率被拒绝；18+ 生图模式抽到的素材会在生成前被校验并自动重抽，建议先关闭 18+ 模式再配合订阅网关使用。
+- 应用只按图库分类做预校验，用户上传图无法预判内容；上游按参考图内容审核，被拒时会返回可操作的中文错误提示，换图或改用官方 API Key 重试即可。
 - 单账号、无并发队列、无计费；多账号/配额/故障转移请部署 [sub2api](https://github.com/Wei-Shaw/sub2api)（Docker，支持 PostgreSQL/Redis、多账号、异步图片任务等）。
 - 若本机网络需要代理，启动脚本会自动读取 Windows 系统代理（如 `127.0.0.1:7897`）；也可以手动设置 `HTTPS_PROXY` 后用 `NODE_USE_ENV_PROXY=1 node scripts/codex-image-gateway.mjs`。
 - 网关只监听 `127.0.0.1`，默认不需要 key；如担心被本机其他程序调用，可设置 `-GatewayKey sk-xxx`。
@@ -118,3 +131,7 @@ Invoke-RestMethod http://127.0.0.1:8788/v1/images/generations -Method Post -Body
 | 存储 | 直接读写 `~/.codex/auth.json` | PostgreSQL + Redis |
 | 图片 | `/v1/images/generations|edits`（同步） | 同步 + 异步图片任务、对象存储 |
 | 适用 | 个人本地生图 | 团队/中转站/多账号池 |
+
+## 相关文档
+
+- [真人女性角色桌面壁纸提示词库（16:9 / 微性感 / 可过审措辞）](codex-wallpaper-prompts.md)

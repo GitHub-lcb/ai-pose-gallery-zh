@@ -55,6 +55,7 @@ import {
   getRecipePromptOptions,
   getFlexReferenceOrder,
   isComfyFlexibleLayout,
+  isLocalCodexGateway,
   parseComfyWorkflowNodes,
   PROVIDER_META,
   stitchRecipeCanvas,
@@ -71,6 +72,8 @@ import type {
   GptParams,
   ImagePassMode,
   ImageProviderId,
+  CharacterCount,
+  PromptVerbosity,
   QwenParams,
   RandomCostumeVersion,
 } from '@/types/gallery'
@@ -1060,10 +1063,21 @@ function StudioPage() {
               </>
             )}
 
-            <Field label="画风预设">
+            <Field
+              label="画风预设"
+              hint="选「桌面壁纸 · 微性感（横版）」时，会自动切高质量与横版尺寸（本机 Codex 网关 2048x1152，官方 API 1536x1024）；三张参考图照常使用。"
+            >
               <Select
                 value={apiConfig.stylePreset}
-                onValueChange={(v) => updateApiConfig({ stylePreset: v })}
+                onValueChange={(v) => {
+                  updateApiConfig({ stylePreset: v })
+                  // 桌面壁纸预设：自动切横版尺寸 + 高质量，配合三张参考图做到「一键出壁纸」
+                  if (v === 'wallpaper' && apiConfig.activeProvider === 'gpt') {
+                    updateGptParams(
+                      isLocalCodexGateway(apiConfig) ? { size: '2048x1152', quality: 'high' } : { size: '1536x1024', quality: 'high' }
+                    )
+                  }
+                }}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -1077,6 +1091,49 @@ function StudioPage() {
                 </SelectContent>
               </Select>
             </Field>
+
+            {activeProvider !== 'comfyui' && (
+              <Field
+                label="画面人数"
+                hint="≥2 开启群像模式：全员服装相似、脸和姿势各不相同，人物群像自动铺满画面（支持 2–9 人；6 人以上建议用 16:9 壁纸预设 + high 画质）。"
+              >
+                <Select
+                  value={String(apiConfig.characterCount ?? 1)}
+                  onValueChange={(v) => updateApiConfig({ characterCount: Number(v) as CharacterCount })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {n === 1 ? '1 人（默认单人）' : `${n} 人`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+
+            {activeProvider !== 'comfyui' && (
+              <Field
+                label="提示词风格"
+                hint="推荐「简洁（参考图优先）」：人脸、服装、姿势交给三张参考图，提示词只写人数、场景与画风，避免文字与参考图互相干扰。"
+              >
+                <Select
+                  value={apiConfig.promptVerbosity ?? 'concise'}
+                  onValueChange={(v) => updateApiConfig({ promptVerbosity: v as PromptVerbosity })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="concise">简洁（参考图优先，推荐）</SelectItem>
+                    <SelectItem value="detailed">详细（保留完整文字约束）</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
 
             {activeProvider === 'comfyui' && (
               <>
@@ -1274,7 +1331,10 @@ function StudioPage() {
                         </SelectContent>
                       </Select>
                     </Field>
-                    <Field label="输出尺寸 (size)">
+                    <Field
+                      label="输出尺寸 (size)"
+                      hint="* 2048x1152 为 16:9 桌面壁纸专用（本机 Codex 订阅网关实测支持，上游输出约 1672x941）；官方 OpenAI API 仅支持前三种尺寸。"
+                    >
                       <Select
                         value={apiConfig.gptParams.size}
                         onValueChange={(v) => updateGptParams({ size: v as GptParams['size'] })}
@@ -1286,6 +1346,7 @@ function StudioPage() {
                           <SelectItem value="1024x1536">1024x1536</SelectItem>
                           <SelectItem value="1024x1024">1024x1024</SelectItem>
                           <SelectItem value="1536x1024">1536x1024</SelectItem>
+                          <SelectItem value="2048x1152">2048x1152（16:9 桌面壁纸*）</SelectItem>
                           <SelectItem value="auto">auto</SelectItem>
                         </SelectContent>
                       </Select>

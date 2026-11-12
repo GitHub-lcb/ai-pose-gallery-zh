@@ -225,6 +225,95 @@ check(
 )
 
 // ---------------------------------------------------------------------------
+// 6. Codex 订阅安全范式（本机 127.0.0.1 / localhost 网关专用中性措辞）
+// ---------------------------------------------------------------------------
+const gatewayConfig = (baseUrl) => ({ activeProvider: 'gpt', providers: { gpt: { baseUrl } } })
+check('本机 127.0.0.1 网关 → codex', getPromptProfile(gatewayConfig('http://127.0.0.1:8788/v1')) === 'codex')
+check('localhost 网关 → codex', getPromptProfile(gatewayConfig('http://localhost:8788/v1')) === 'codex')
+check('官方 OpenAI API → classic', getPromptProfile(gatewayConfig('https://api.openai.com/v1')) === 'classic')
+check(
+  '其它 provider 即使配本地地址也不走 codex',
+  getPromptProfile({ activeProvider: 'gemini', providers: { gpt: { baseUrl: 'http://127.0.0.1:8788/v1' } } }) === 'classic'
+)
+const codexText = buildRecipePrompt({ portrait, costume, pose }, 'realistic', [], { profile: 'codex' })
+check('codex 不含敏感身材/皮肤措辞（胸部/裸露/镂空/腰胯/幼态）', !/胸部|裸露|镂空|腰胯|幼态/.test(codexText), codexText.match(/胸部|裸露|镂空|腰胯|幼态/)?.[0] ?? '')
+check('codex 仍为分点结构并保留图N指代', codexText.includes('\n') && codexText.includes('图1') && codexText.includes('图3'))
+check('codex 含中性着装收束句', codexText.includes('着装完整得体'))
+const codexPoseOnly = buildRecipePrompt({ portrait: null, costume: null, pose }, 'anime', [], { profile: 'codex' })
+check('codex 任意画风仍可构建', codexPoseOnly.length > 100 && !/胸部|裸露/.test(codexPoseOnly))
+
+// ---------------------------------------------------------------------------
+// 7. 桌面壁纸预设（wallpaper）：横版构图 + 中性措辞 + 三图自动组装
+// ---------------------------------------------------------------------------
+const wallpaperText = buildRecipePrompt({ portrait, costume, pose }, 'wallpaper', [], { profile: 'codex' })
+check('壁纸预设：横版构图 + 三分线 + 负空间', /横版/.test(wallpaperText) && /三分线/.test(wallpaperText) && /负空间/.test(wallpaperText))
+check('壁纸预设：真人写实 + 无文字约束', /真实的?人物照片|真人/.test(wallpaperText) && /没有文字/.test(wallpaperText))
+check(
+  '壁纸预设：不含高风险词',
+  !/sexy|seductive|cleavage|lingerie|bikini|form-fitting|high slit|off-shoulder|性感|裸露/i.test(wallpaperText)
+)
+check('壁纸预设：classic 范式同样生效', buildRecipePrompt({ portrait, costume, pose }, 'wallpaper', [], { profile: 'classic' }).includes('横版'))
+
+// ---------------------------------------------------------------------------
+// 8. 人物数量约束：非双人姿势必须显式单人；双人姿势不得冲突
+// ---------------------------------------------------------------------------
+const classicSingle = classic({ portrait, costume, pose }, 'realistic', threeOrder)
+check('非双人：显式单人构图约束', classicSingle.includes('单人构图') && classicSingle.includes('只有一位成年女性'))
+check('非双人：禁止第二人物 / 人体模型 / 人台', /不要出现第二位人物/.test(classicSingle) && /人体模型/.test(classicSingle) && /人台/.test(classicSingle))
+const classicPair = classic({ portrait, costume, pose: pairPose }, 'realistic', threeOrder)
+check('双人姿势：要求两人且不加单人约束', classicPair.includes('双人构图') && !classicPair.includes('只有一位成年女性'))
+const classicStitched = buildRecipePrompt({ portrait, costume, pose }, 'realistic', [], { profile: 'classic', stitchedSheet: true })
+check('附带拼图：声明拼图仅参考、不是构图', /参考拼图/.test(classicStitched) && /不是成品构图/.test(classicStitched))
+check('codex 非双人：同样带单人约束', buildRecipePrompt({ portrait, costume, pose }, 'realistic', [], { profile: 'codex' }).includes('只有一位成年女性'))
+
+// ---------------------------------------------------------------------------
+// 9. 群像模式（画面人数 2~5：服装相似、人脸不同、姿势不同）
+// ---------------------------------------------------------------------------
+const crowd4 = buildRecipePrompt({ portrait, costume, pose }, 'wallpaper', [], { profile: 'classic', characterCount: 4 })
+check('群像：人数准确声明', crowd4.includes('4 位成年女性') && /有且仅有 4 位成年女性/.test(crowd4))
+check('群像：人脸各不相同', /每个人的脸型、五官、发型都不同/.test(crowd4) && /不要重复同一张脸/.test(crowd4))
+check('群像：姿势与站位各不相同', /姿势与站位各不相同/.test(crowd4))
+check('群像：服装相似统一', /同款或近似款/.test(crowd4) && /服装风格统一/.test(crowd4))
+check('群像：不再出现单人约束', !crowd4.includes('只有一位成年女性'))
+check('群像：9 人可用', buildRecipePrompt({ portrait, costume, pose }, 'realistic', [], { profile: 'classic', characterCount: 9 }).includes('9 位成年女性'))
+check('群像：超过 9 人自动收敛为 9', buildRecipePrompt({ portrait, costume, pose }, 'realistic', [], { profile: 'classic', characterCount: 12 }).includes('9 位成年女性'))
+const crowdWithPairPose = buildRecipePrompt({ portrait, costume, pose: pairPose }, 'realistic', [], { profile: 'classic', characterCount: 3 })
+check('群像 + 双人姿势：以人数为准、无双人/单人冲突', crowdWithPairPose.includes('3 位成年女性') && !crowdWithPairPose.includes('双人构图') && !crowdWithPairPose.includes('只有一位成年女性'))
+check('群像构图：人物铺满画面、不再留大面积负空间', crowd4.includes('铺满画面') && !crowd4.includes('大面积干净负空间'))
+const singleWallpaper = buildRecipePrompt({ portrait, costume, pose }, 'wallpaper', [], { profile: 'classic' })
+check('单人壁纸：仍保留桌面负空间', singleWallpaper.includes('负空间'))
+const crowdConciseFill = buildRecipePrompt({ portrait, costume, pose }, 'wallpaper', [], { profile: 'codex', verbosity: 'concise', characterCount: 9 })
+check('简洁群像：9 人铺满画面', crowdConciseFill.includes('9 位成年女性') && crowdConciseFill.includes('铺满画面') && !crowdConciseFill.includes('大面积干净负空间'))
+
+// ---------------------------------------------------------------------------
+// 10. 简洁范式（参考图优先：只写必要绑定 + 人数 + 场景 + 风格）
+// ---------------------------------------------------------------------------
+const conciseSingle = buildRecipePrompt({ portrait, costume, pose }, 'realistic', [], { profile: 'classic', verbosity: 'concise' })
+check('简洁：保留图1/图2/图3 绑定', conciseSingle.includes('图1') && conciseSingle.includes('图2') && conciseSingle.includes('图3'))
+check(
+  '简洁：不复述五官/服装/身材/关节长描述',
+  !/胸部|裸露|腰胯|幼态|每只手 5 根手指|人体比例|身材（默认偏好）/.test(conciseSingle)
+)
+check(
+  '简洁：明显短于详细版',
+  conciseSingle.length < 500 && conciseSingle.length < classic({ portrait, costume, pose }, 'realistic', threeOrder).length,
+  `简洁 ${conciseSingle.length} 字`
+)
+const conciseMulti = buildRecipePrompt({ portrait, costume, pose }, 'wallpaper', [], {
+  profile: 'codex',
+  verbosity: 'concise',
+  characterCount: 4,
+})
+check(
+  '简洁群像：人数/脸/姿势一句到位',
+  conciseMulti.includes('4 位成年女性') && /每个人的脸型、五官必须不同/.test(conciseMulti) && /姿势与站位各不相同/.test(conciseMulti)
+)
+check('简洁群像：无双人/单人冲突', !conciseMulti.includes('双人构图') && !conciseMulti.includes('只有一位成年女性'))
+check('简洁壁纸：含横版构图', /横版/.test(conciseMulti))
+check('简洁 codex：无敏感身材措辞', !/胸部|裸露|腰胯|幼态/.test(conciseMulti))
+check('简洁：水印约束不重复', (conciseMulti.match(/画面中没有文字/g) || []).length === 1)
+
+// ---------------------------------------------------------------------------
 console.log(`\n提示词回归检查：${passed} 项通过，${failed} 项失败`)
 if (failed > 0) process.exit(1)
 

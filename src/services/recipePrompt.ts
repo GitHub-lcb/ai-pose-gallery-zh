@@ -1,4 +1,4 @@
-import type { ApiConfig, ExtraReferenceImage, PoseItem, RecipeState } from '@/types/gallery'
+import type { ApiConfig, ExtraReferenceImage, PoseItem, PromptVerbosity, RecipeState } from '@/types/gallery'
 
 // ============================================================================
 // 提示词构建器（纯函数，无运行时依赖，供 node 直接做快照/ lint 测试）
@@ -14,7 +14,7 @@ import type { ApiConfig, ExtraReferenceImage, PoseItem, RecipeState } from '@/ty
 // ComfyUI 2.1 模板说明、comfy/text_encoders/qwen_image21.py 的 <imageN> 拼接机制）。
 // ============================================================================
 
-export type PromptProfile = 'qwen21' | 'classic'
+export type PromptProfile = 'qwen21' | 'classic' | 'codex'
 
 export const PROMPT_PROFILE_LABELS: Record<PromptProfile, { label: string; hint: string }> = {
   qwen21: {
@@ -25,10 +25,29 @@ export const PROMPT_PROFILE_LABELS: Record<PromptProfile, { label: string; hint:
     label: '通用分点格式',
     hint: '中文分点约束，适配云端模型与 Qwen-Image-Edit 2509',
   },
+  codex: {
+    label: 'Codex 订阅安全（中性措辞）',
+    hint: '本机 Codex / ChatGPT 订阅网关专用：中性描述身材与皮肤、避免露骨修饰；参考图仍需避开泳装 / 内衣 / 性感类素材',
+  },
 }
 
-/** 根据当前接口配置选择提示词范式：只有 Qwen Image 2.1 链路走官方范式 */
+const LOCAL_GATEWAY_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
+
+/** 当前配置是否指向本机 Codex / ChatGPT 订阅生图网关（127.0.0.1 / localhost） */
+export function isLocalCodexGateway(config: ApiConfig): boolean {
+  if (config.activeProvider !== 'gpt') return false
+  const baseUrl = (config.providers.gpt?.baseUrl || '').trim()
+  if (!baseUrl) return false
+  try {
+    return LOCAL_GATEWAY_HOSTS.has(new URL(baseUrl).hostname.toLowerCase())
+  } catch {
+    return /^(https?:\/\/)?(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i.test(baseUrl)
+  }
+}
+
+/** 根据当前接口配置选择提示词范式：本机 Codex 订阅网关走中性措辞，Qwen Image 2.1 走官方范式 */
 export function getPromptProfile(config: ApiConfig): PromptProfile {
+  if (isLocalCodexGateway(config)) return 'codex'
   if (config.activeProvider !== 'comfyui') return 'classic'
   const preset = config.comfyuiParams.workflowPreset
   return preset === 'qwen21_local_3img' || preset === 'qwen21_local_2img' || preset === 'qwen21_3img' || preset === 'qwen21_2img'
@@ -167,6 +186,18 @@ export const STYLE_PRESETS: Record<string, StylePresetInfo> = {
     medium: 'illustration',
     closing: '整体为标准角色设定集立绘风格，背景干净、服装结构清晰',
   },
+  // 桌面壁纸预设：横版宽幅 + 三分线构图 + 大面积负空间，配真人写实风格；
+  // 提示词保持中性克制（避免 form-fitting/high slit/sexy 等触发订阅审核的词）。
+  wallpaper: {
+    label: '桌面壁纸 · 微性感（横版）',
+    prompt:
+      '电影感真人时尚摄影，横版宽幅桌面壁纸构图：人物位于左右三分线，另一侧保留大面积干净负空间，背景景深自然虚化、环境占比约一半；整体优雅克制、气质高级、自带吸引力，光影与色调统一，画面中没有文字、标志或水印。',
+    light: '柔和电影级侧逆光与暖调轮廓光，勾勒发丝、肩线与服装质感，背景暗部层次丰富并带柔和光斑',
+    lens: '85mm 中长焦',
+    composition: '横版宽幅构图，人物位于左右三分线，另一侧留出大面积负空间',
+    medium: 'photo',
+    closing: '整体为电影感真人桌面壁纸风格，氛围优雅克制、光影高级',
+  },
 }
 
 /** 产物媒介名词（用于 qwen21 开头句） */
@@ -217,7 +248,20 @@ function buildDerivedScene(recipe: RecipeState, poseClass: PoseClass, style: Sty
   return `画面背景依据参考图中的人物气质、服装风格与姿势自然生成：${env}，${light}，背景有真实的环境层次与景深`
 }
 
-const PHOTO_STYLES = new Set(['realistic', 'fashion', 'film'])
+const PHOTO_STYLES = new Set(['realistic', 'fashion', 'film', 'wallpaper'])
+
+/**
+ * 群像构图：画风预设（尤其壁纸）默认给单人留「左右三分线 + 大面积负空间」，
+ * 多人时改为「人物群像铺满画面、占据主体」，避免 4~9 人只占画面一角。
+ */
+function stylePromptForCount(promptText: string, multiPerson: boolean): string {
+  if (!multiPerson || !promptText) return promptText
+  return promptText
+    .replace('人物位于左右三分线，另一侧保留大面积干净负空间', '人物群像铺满画面、占据画面主体，分布饱满均匀、前后错落')
+    .replace('另一侧保留大面积干净负空间', '人物群像铺满画面、分布饱满均匀')
+    .replace('人物位于左右三分线', '人物群像分布在整个画面')
+    .replace('环境占比约一半', '环境作为背景衬托')
+}
 
 // 3D 素体姿势图自带「大头/长腿」的夸张人偶比例，若不显式约束，成图会照搬导致身材比例失真
 // 注意：实测生成结果最典型的问题是「头大身小 / 幼态比例」，因此强化头身比与头部大小的约束
@@ -234,6 +278,21 @@ const FIGURE_PREFERENCE_STYLIZED =
 const DETAIL_GUARD =
   '• 人体细节（重要）：头部、脖子与肩膀自然连接，不要断头、颈部错位或头部悬浮；双手结构正确，每只手 5 根手指、手指自然弯曲不粘连、不多手缺手；双脚与脚趾结构正确，不融合、不多脚缺脚；膝盖、手肘等关节自然；不要照搬人体模型的白模材质、接缝与拼接线。'
 
+// ----------------------------------------------------------------------------
+// Codex 订阅安全范式（profile='codex'）专用中性措辞：
+// 订阅账号的图片审核对「胸部 / 裸露 / 腰胯 / 幼态」等字眼更敏感，
+// 实测提示词本身不是唯一触发点（泳装类参考图会直接 400），但中性措辞能降低误伤。
+// ----------------------------------------------------------------------------
+const CODEX_FIGURE_PREFERENCE = '• 身材：成年女性，身材匀称健康，体态自然舒展，比例协调。'
+const CODEX_DETAIL_GUARD =
+  '• 人体结构（重要）：头部、脖子与肩膀自然连接；双手结构正确，每只手 5 根手指、手指自然弯曲、不粘连不多手缺手；双脚与脚趾结构正确，不融合不多脚缺脚；膝盖、手肘等关节自然；不要照搬人体模型的白模材质、接缝与拼接线。'
+const CODEX_SKIN_TONE = '人物的肤色与图1中人物一致，脸部、颈部与手部等可见皮肤的肤色自然统一，按画风要求呈现质感。'
+const CODEX_PROPORTION_FULLBODY =
+  '• 人体比例（重要）：成年女性真实自然的全身比例（约 7~7.5 头身），头部大小与肩宽、躯干、四肢长度协调；避免大头小身、躯干过短或四肢过细；头顶与双脚均完整入镜、不被裁切，姿态与关节自然。'
+const CODEX_PROPORTION_STYLIZED =
+  '• 人体比例（重要）：成年角色自然比例（约 7~7.5 头身），头部大小与躯干、四肢长度协调；按该画风的标准人物比例绘制，头顶与双脚完整入镜。'
+const CODEX_TONE_CLOSING = '画面人物着装完整得体，整体氛围优雅自然。'
+
 export interface RecipePromptOptions {
   /** 双图模式：使用「服装图」作为人物/服装参考（不选人像，脸部由模型自由生成） */
   costumeAsPerson?: boolean
@@ -247,6 +306,12 @@ export interface RecipePromptOptions {
   imageOrder?: Array<'portrait' | 'costume' | 'pose'>
   /** 提示词范式：qwen21 = 官方单段指令；classic = 旧版分点 */
   profile?: PromptProfile
+  /** 是否额外发送了三合一参考拼图（多格并排），需在提示词中说明它只是参考、不是成品构图 */
+  stitchedSheet?: boolean
+  /** 画面人数：1 = 单人（默认）；2~9 = 群像模式（服装相似、人脸不同、姿势不同） */
+  characterCount?: number
+  /** 提示词风格：concise = 参考图优先（只写必要绑定，默认）；detailed = 保留完整约束 */
+  verbosity?: PromptVerbosity
 }
 
 // ----------------------------------------------------------------------------
@@ -256,7 +321,8 @@ function buildClassicPrompt(
   recipe: RecipeState,
   stylePreset: string,
   workflowImages: ExtraReferenceImage[],
-  options: RecipePromptOptions
+  options: RecipePromptOptions,
+  safe = false
 ): string {
   const { costumeAsPerson = false, ignoreCostume = false, freeFace: freeFaceOption = true, poseFirst = false } = options
   const portrait = costumeAsPerson ? null : recipe.portrait
@@ -267,6 +333,11 @@ function buildClassicPrompt(
   const freeFace = freeFaceOption && !portrait && !workflowImages.some((image) => image.role === 'character_sheet') && Boolean(costume || recipe.pose)
   // 「双人缠绵」姿势参考里是两位人物，提示词必须显式要求画出两个人，否则模型容易合并成单人
   const isPairPose = Boolean(recipe.pose && recipe.pose.source !== 'upload' && recipe.pose.体系.includes('双人'))
+  // 群像模式（画面人数 2~9）：服装同款/近似、人脸各不相同、姿势各不相同；1 = 默认单人
+  const characterCount = Math.min(9, Math.max(1, Math.round(Number(options.characterCount) || 1)))
+  const multiPerson = characterCount >= 2
+  // 双人姿势逻辑只在非群像模式下生效（群像以「画面人数」为准）
+  const pairMode = isPairPose && !multiPerson
   const clauses: string[] = []
   let idx = 1
   let costumeIdx = 0
@@ -278,31 +349,45 @@ function buildClassicPrompt(
 
   if (portrait) {
     const hairDesc = portrait.发型名称 && portrait.发型名称 !== '标准基础款' ? portrait.标题 : portrait.发长
-    const skin = '人物的肤色必须与图一人物一致，所有裸露皮肤（包括服装镂空处露出的皮肤）必须与脸部肤色统一，统一后的肤色与质感按风格要求呈现。'
+    const skin = safe
+      ? CODEX_SKIN_TONE
+      : '人物的肤色必须与图一人物一致，所有裸露皮肤（包括服装镂空处露出的皮肤）必须与脸部肤色统一，统一后的肤色与质感按风格要求呈现。'
     const outfit = costume ? '' : '保留图1人物原有可见服装与配饰，不复制姿势参考图的服装或白模外观。'
-    clauses.push(
-      portrait.source === 'upload'
-        ? `• 人物：图${idx}中的人物，保持其脸型、五官、发型和发色一致。${skin}${outfit}`
-        : `• 人物：图${idx}中的人物，保持其脸型、五官、发型（${hairDesc}）和发色一致。${skin}${outfit}`
-    )
+    if (multiPerson) {
+      clauses.push(
+        `• 人物：图${idx}中的人物仅作为整组人物的气质、发型与肤色参考，不是画面中的唯一人物；画面中每一位成年女性的脸型、五官、发型都要彼此不同，不要复制同一张脸、不要出现镜像分身。${skin}`
+      )
+    } else {
+      clauses.push(
+        portrait.source === 'upload'
+          ? `• 人物：图${idx}中的人物，保持其脸型、五官、发型和发色一致。${skin}${outfit}`
+          : `• 人物：图${idx}中的人物，保持其脸型、五官、发型（${hairDesc}）和发色一致。${skin}${outfit}`
+      )
+    }
     idx++
   }
   if (costume) {
     costumeIdx = idx
     if (costumeAsPerson) {
       clauses.push(
-        costume.source === 'upload'
-          ? `• 服装（图${idx}，作为人物与服装参考）：图${idx} 没有人脸，仅展示整套服装与配饰；请生成一位成年女性穿上图${idx}展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
-          : `• 服装（图${idx}，作为人物与服装参考）：图${idx} 没有人脸，仅展示整套服装与配饰（参考名称：${costume.服装名称}）；请生成一位成年女性穿上图${idx}展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准，名称仅作辅助说明。`
+        multiPerson
+          ? `• 服装（图${idx}，作为整组人物与服装参考）：图${idx} 没有人脸，仅展示整套服装与配饰（参考名称：${costume.服装名称}）；请生成 ${characterCount} 位成年女性，每人都穿上图${idx}展示的整套服装和配饰（同款服装，允许尺码与穿着方式自然差异），每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
+          : costume.source === 'upload'
+            ? `• 服装（图${idx}，作为人物与服装参考）：图${idx} 没有人脸，仅展示整套服装与配饰；请生成一位成年女性穿上图${idx}展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
+            : `• 服装（图${idx}，作为人物与服装参考）：图${idx} 没有人脸，仅展示整套服装与配饰（参考名称：${costume.服装名称}）；请生成一位成年女性穿上图${idx}展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准，名称仅作辅助说明。`
       )
       clauses.push(
-        '• 人物（自由生成）：本组合不提供人脸参考；请为这套服装生成一位面部自然、与画风匹配的成年女性（五官清晰、左右对称、比例自然、肤色统一）；画面必须包含完整的头部、脸部和脖子，头部与身体自然连接，不要照搬服装参考图/人台的无头构图，也不要只画身体或服装展示。'
+        multiPerson
+          ? `• 人物（自由生成）：本组合不提供人脸参考；请为画面中的 ${characterCount} 位成年女性分别生成自然、彼此不同的面部（五官清晰、左右对称、比例自然、肤色统一）；每个人物都要有完整的头部、脸部和脖子，头部与身体自然连接，不要照搬服装参考图/人台的无头构图，不要出现重复的脸。`
+          : '• 人物（自由生成）：本组合不提供人脸参考；请为这套服装生成一位面部自然、与画风匹配的成年女性（五官清晰、左右对称、比例自然、肤色统一）；画面必须包含完整的头部、脸部和脖子，头部与身体自然连接，不要照搬服装参考图/人台的无头构图，也不要只画身体或服装展示。'
       )
     } else {
       clauses.push(
-        costume.source === 'upload'
-          ? `• 服装：让人物穿上图${idx}中展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
-          : `• 服装：让人物穿上图${idx}中展示的整套服装和配饰（参考名称：${costume.服装名称}），每件单品的颜色、款式、面料与配饰都以图${idx}为准，名称仅作辅助说明。`
+        multiPerson
+          ? `• 服装：让画面中的 ${characterCount} 位人物都穿上图${idx}展示的整套服装与配饰（同款或近似款，允许尺码与穿着方式自然差异，整体风格统一，不要出现风格突兀的第二套服装），每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
+          : costume.source === 'upload'
+            ? `• 服装：让人物穿上图${idx}中展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以图${idx}为准。`
+            : `• 服装：让人物穿上图${idx}中展示的整套服装和配饰（参考名称：${costume.服装名称}），每件单品的颜色、款式、面料与配饰都以图${idx}为准，名称仅作辅助说明。`
       )
     }
     // 动漫库服装是 2D 线稿/插画，真人照片风格下需转译为真实材质，避免「真人脸 + 动漫平涂服装」拼贴感
@@ -318,15 +403,18 @@ function buildClassicPrompt(
   if (recipe.pose) {
     const wear = costumeIdx ? `，穿着图${costumeIdx}的服装` : ''
     const body = isPhoto ? `最终画面中的人物是真人，皮肤真实自然${wear}` : `人物的肤色与质感按风格要求呈现${wear}`
+    const poseActor = recipe.pose.source === 'upload' ? '人物' : '人体模型'
     clauses.push(
-      isPairPose
-        ? `• 姿势（双人）：图${idx} 是双人姿势参考，画面中必须同时出现两位人物；严格按照图中两人的相对站位、肢体互动与镜头角度摆姿势（${recipe.pose.姿势名称}，${recipe.pose.角度}）；图${idx} 只是动作示意，不要把两位人物合并成一个人、不要裁掉其中一人，${body}。`
-        : recipe.pose.source === 'upload'
-          ? `• 姿势：按照图${idx}中的人物动作和镜头角度摆姿势；仅参考姿势与构图，不复制图${idx}人物的外观与服装，${body}。`
-          : `• 姿势：按照图${idx}中人体模型的动作和镜头角度摆姿势（${recipe.pose.姿势名称}，${recipe.pose.角度}）；图${idx}只是动作示意，${body}。`
+      multiPerson
+        ? `• 姿势（群像）：图${idx} 中${poseActor}的动作只作为其中一位人物的参考；画面中 ${characterCount} 位人物的姿势必须各不相同、自然错落（例如站立、侧身、坐姿、倚靠、回眸等），避免排成一行、避免复制同一个动作、避免互相遮挡；图${idx} 只是动作示意。${body}。`
+        : isPairPose
+          ? `• 姿势（双人）：图${idx} 是双人姿势参考，画面中必须同时出现两位人物；严格按照图中两人的相对站位、肢体互动与镜头角度摆姿势（${recipe.pose.姿势名称}，${recipe.pose.角度}）；图${idx} 只是动作示意，不要把两位人物合并成一个人、不要裁掉其中一人，${body}。`
+          : recipe.pose.source === 'upload'
+            ? `• 姿势：按照图${idx}中的人物动作和镜头角度摆姿势；仅参考姿势与构图，不复制图${idx}人物的外观与服装，${body}。`
+            : `• 姿势：按照图${idx}中人体模型的动作和镜头角度摆姿势（${recipe.pose.姿势名称}，${recipe.pose.角度}）；图${idx}只是动作示意，${body}。`
     )
     idx++
-    if (isPairPose) {
+    if (pairMode) {
       const faceRef = portrait
         ? '两位人物的脸型、五官与发型均以图1为面部参考（可呈现为同一角色的两个角度或双胞胎设定，不要重复粘贴完全相同的脸）。'
         : '两位人物均为成年女性，面部自然生成且气质相近，不要重复同一张脸。'
@@ -337,19 +425,43 @@ function buildClassicPrompt(
         `• 双人构图（重要）：画面中必须同时出现两位成年女性人物，两人均完整入镜、不被裁切；${faceRef}${pairWear}两人的头部与颈部、肩膀自然连接，不要头部拼接/悬浮；两人的腿脚分别完整，不要多脚、融合脚或共用肢体；两人的身高与体型比例协调，肢体互动自然，手部与肢体互不粘连。`
       )
     }
-    // 仅对「全身 / 双人」姿势追加完整头身比约束（半身/特写通常不会整体比例失真）
-    if (recipe.pose.source === 'upload' || /全身|双人/.test(recipe.pose.体系)) {
-      clauses.push(isPhoto ? PROPORTION_FULLBODY_PHOTO : PROPORTION_FULLBODY_STYLIZED)
+    // 仅对「全身 / 双人」姿势追加完整头身比约束（半身/特写通常不会整体比例失真；群像构图不强制全身入镜）
+    if (!multiPerson && (recipe.pose.source === 'upload' || /全身|双人/.test(recipe.pose.体系))) {
+      if (safe) clauses.push(isPhoto ? CODEX_PROPORTION_FULLBODY : CODEX_PROPORTION_STYLIZED)
+      else clauses.push(isPhoto ? PROPORTION_FULLBODY_PHOTO : PROPORTION_FULLBODY_STYLIZED)
     }
   }
   // 默认身材偏好：所有带人物的生成都追加（胸部略丰满、成熟匀称），更符合用户默认期望
   if (portrait || costume || recipe.pose) {
-    clauses.push(isPhoto ? FIGURE_PREFERENCE_PHOTO : FIGURE_PREFERENCE_STYLIZED)
-    clauses.push(DETAIL_GUARD)
+    if (safe) {
+      clauses.push(CODEX_FIGURE_PREFERENCE)
+      clauses.push(CODEX_DETAIL_GUARD)
+    } else {
+      clauses.push(isPhoto ? FIGURE_PREFERENCE_PHOTO : FIGURE_PREFERENCE_STYLIZED)
+      clauses.push(DETAIL_GUARD)
+    }
+  }
+  // 人物数量约束：群像（2~9 人）要求人数准确、脸与姿势各不相同；单人要显式禁止额外人物；
+  // 双人姿势由上面的双人分支负责，不能加单人约束。
+  if (multiPerson) {
+    clauses.push(
+      `• 群像构图（重要）：画面中有且仅有 ${characterCount} 位成年女性，人数准确、不多不少；每个人的脸型、五官、发型都不同，不要重复同一张脸或镜像分身；每个人的姿势与站位各不相同、自然错落有层次，不要排成一行、不要互相遮挡；所有人服装风格统一（同款或近似款），不要出现风格突兀的第二套服装。人物群像铺满画面、占据画面主体，分布饱满均匀，不要留大面积空白或空置背景。`
+    )
+  } else if (!isPairPose) {
+    clauses.push(
+      '• 单人构图（重要）：画面中只有一位成年女性，构图聚焦单人；不要出现第二位人物、人体模型、假人、服装展示人台或镜像分身。'
+    )
+  }
+  if (options.stitchedSheet) {
+    clauses.push(
+      '• 参考拼图：若另附多格并排的参考拼图，它只说明人像/服装/姿势的来源，不是成品构图；不要照搬拼图排版，也不要因此输出多个人物。'
+    )
   }
   if (freeFace && !costumeAsPerson) {
     clauses.push(
-      '• 人物（自由生成）：本组合不提供人脸参考；请生成一位面部自然、与画风匹配的成年女性（五官清晰、左右对称、比例自然、肤色统一）；画面必须包含完整的头部、脸部和脖子，头部与身体自然连接，不要照搬服装参考图/人台的无头构图，也不要只画身体或服装展示。'
+      multiPerson
+        ? `• 人物（自由生成）：本组合不提供人脸参考；请为画面中的 ${characterCount} 位成年女性分别生成自然、彼此不同的面部（五官清晰、左右对称、比例自然、肤色统一），每人都要有完整的头部、脸部和脖子，头部与身体自然连接，不要照搬服装参考图/人台的无头构图，不要出现重复的脸。`
+        : '• 人物（自由生成）：本组合不提供人脸参考；请生成一位面部自然、与画风匹配的成年女性（五官清晰、左右对称、比例自然、肤色统一）；画面必须包含完整的头部、脸部和脖子，头部与身体自然连接，不要照搬服装参考图/人台的无头构图，也不要只画身体或服装展示。'
     )
   }
   // 背景由参考图驱动：上传参考图带场景就跟随；否则按服装风格 + 姿势 + 画风光线自动生成
@@ -376,12 +488,13 @@ function buildClassicPrompt(
   }
 
   const lines = [
-    `请根据${workflowImages.some((image) => image.role === 'character_sheet') ? '提供的角色设定参考' : `提供的 ${idx - 1} 张参考图`}，生成一张${isPairPose ? '包含两位人物的' : ''}完整的${isPhoto ? '真实人物照片' : '人物图像'}：`,
+    `请根据${workflowImages.some((image) => image.role === 'character_sheet') ? '提供的角色设定参考' : `提供的 ${idx - 1} 张参考图`}，生成一张${multiPerson ? `包含 ${characterCount} 位成年女性的` : isPairPose ? '包含两位人物的' : ''}完整的${isPhoto ? '真实人物照片' : '人物图像'}：`,
     ...clauses,
   ]
   if (styleInfo.prompt) {
-    lines.push(`• 风格：${styleInfo.prompt} 人物比例协调，手部与五官自然，光影统一。`)
+    lines.push(`• 风格：${stylePromptForCount(styleInfo.prompt, multiPerson)} 人物比例协调，手部与五官自然，光影统一。`)
   }
+  if (safe) lines.push(CODEX_TONE_CLOSING)
   lines.push('画面中没有任何文字、标志或水印。')
   const text = lines.join('\n')
   // 双图固定模板内部按「图1=姿势、图2=人物/服装」编码，这里交换提示词编号以匹配实际送图顺序
@@ -657,6 +770,96 @@ function buildQwen21Prompt(recipe: RecipeState, stylePreset: string, options: Re
   return sentences.join('。') + '。'
 }
 
+// ----------------------------------------------------------------------------
+// 简洁范式（参考图优先）：人脸 / 服装 / 姿势已经由三张参考图表达，
+// 提示词只写「哪张图做什么 + 人数 + 场景 + 风格」，不再复述五官、服装细节、
+// 身材、关节比例等长描述——避免和参考图互相干扰，也降低订阅审核误伤。
+// ----------------------------------------------------------------------------
+function buildConcisePrompt(
+  recipe: RecipeState,
+  stylePreset: string,
+  workflowImages: ExtraReferenceImage[],
+  options: RecipePromptOptions,
+  safe = false
+): string {
+  const { costumeAsPerson = false, ignoreCostume = false } = options
+  const portrait = costumeAsPerson ? null : recipe.portrait
+  const costume = ignoreCostume ? null : recipe.costume
+  const style = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.realistic
+  const isPhoto = PHOTO_STYLES.has(stylePreset)
+  const characterCount = Math.min(9, Math.max(1, Math.round(Number(options.characterCount) || 1)))
+  const multiPerson = characterCount >= 2
+  const isPairPose = Boolean(recipe.pose && recipe.pose.source !== 'upload' && recipe.pose.体系.includes('双人'))
+  const pairMode = isPairPose && !multiPerson
+
+  // 参考图编号（与实际送图顺序一致：设定图 → 人像 → 服装 → 姿势）
+  let idx = 1
+  const lines: string[] = []
+  for (let i = 0; i < workflowImages.filter((image) => image.role === 'character_sheet').length; i++) {
+    lines.push(`图${idx}为角色设定参考（同一角色，不是多人）`)
+    idx++
+  }
+  const portraitIdx = portrait ? idx++ : 0
+  const costumeIdx = costume ? idx++ : 0
+  const poseIdx = recipe.pose ? idx++ : 0
+
+  const countText = multiPerson ? `包含 ${characterCount} 位成年女性的` : pairMode ? '包含两位人物的' : ''
+  lines.push(`请根据提供的 ${idx - 1} 张参考图，生成一张${countText}${isPhoto ? '真实人物照片' : '人物图像'}：`)
+
+  // 人脸：只说“用哪张图保持一致”，不描述具体五官
+  if (portrait) {
+    lines.push(
+      multiPerson
+        ? `图${portraitIdx}只作整组人物的气质与发型参考，每个人的脸型、五官必须不同。`
+        : `以图${portraitIdx}为人物参考，保持脸型、五官、发型与发色一致。`
+    )
+  }
+  // 服装：只说“穿上图N的服装”，不列单品名称/材质细节
+  if (costume) {
+    lines.push(
+      multiPerson
+        ? `画面中每人都穿图${costumeIdx}的服装与配饰（同款或近似款，整体风格统一）。`
+        : `让人物穿上图${costumeIdx}的服装与配饰。`
+    )
+    if (costume.版本 === '二次元' && costume.source !== 'upload' && isPhoto) {
+      lines.push(`把图${costumeIdx}的二次元服装转译为真实面料。`)
+    }
+  }
+  // 姿势：只说“按图N的动作”，不写关节/比例/入镜范围
+  if (recipe.pose) {
+    if (multiPerson) {
+      lines.push(`图${poseIdx}只作其中一人的动作参考；${characterCount} 人的姿势与站位各不相同、自然错落。`)
+    } else if (pairMode) {
+      lines.push(`按图${poseIdx}中两人的相对站位与镜头角度摆姿势，画面中必须有两位人物。`)
+    } else {
+      lines.push(`按图${poseIdx}的动作与镜头角度摆姿势；图${poseIdx}只作动作示意。`)
+    }
+  }
+  // 人数声明（防止参考图被理解成多人）
+  if (multiPerson) {
+    lines.push(
+      `画面中有且仅有 ${characterCount} 位成年女性；每人的脸型、五官、发型都不同，不要重复同一张脸或镜像分身；不要出现风格不同的第二套服装。人物群像铺满画面、占据画面主体，分布饱满均匀，不要留大面积空白或空置背景。`
+    )
+  } else if (!pairMode) {
+    lines.push('画面中只有一位成年女性，不要出现第二个人物、人体模型或服装展示人台。')
+  }
+  if (!portrait && !costumeAsPerson && (costume || recipe.pose)) {
+    lines.push('人物面部自然生成，与画风匹配。')
+  }
+  // 场景：有上传参考图就跟随，否则按服装推导；不做长段落布光描写
+  if (pickSceneSource(recipe)) {
+    lines.push('背景与光线参考上传的参考图。')
+  } else {
+    lines.push(`场景：${deriveEnvironment(recipe)}。`)
+  }
+  // 风格：沿用画风预设自带的风格关键词（含壁纸预设的横版构图；多人时改为铺满画面）
+  if (style.prompt) lines.push(stylePromptForCount(style.prompt, multiPerson))
+  if (safe) lines.push('人物着装完整得体。')
+  // 部分画风（如壁纸预设）的风格句里已经写了「没有文字/水印」，避免重复
+  if (!/没有文字|水印/.test(style.prompt || '')) lines.push('画面中没有文字、标志或水印。')
+  return lines.join('\n')
+}
+
 /** 按当前范式构建提示词 */
 export function buildRecipePrompt(
   recipe: RecipeState,
@@ -664,8 +867,11 @@ export function buildRecipePrompt(
   workflowImages: ExtraReferenceImage[] = [],
   options: RecipePromptOptions = {}
 ): string {
-  if ((options.profile ?? 'classic') === 'qwen21') return buildQwen21Prompt(recipe, stylePreset, options)
-  return buildClassicPrompt(recipe, stylePreset, workflowImages, options)
+  const profile = options.profile ?? 'classic'
+  if (profile === 'qwen21') return buildQwen21Prompt(recipe, stylePreset, options)
+  const safe = profile === 'codex'
+  if (options.verbosity === 'concise') return buildConcisePrompt(recipe, stylePreset, workflowImages, options, safe)
+  return buildClassicPrompt(recipe, stylePreset, workflowImages, options, safe)
 }
 
 // ----------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { queryOptions } from '@tanstack/react-query'
-import type { CostumeItem, PortraitItem, PoseGroup, PoseItem } from '@/types/gallery'
+import type { CostumeItem, PortraitItem, PoseGroup, PoseItem, RecipeState } from '@/types/gallery'
 
 export const ANGLES = ['正面', '俯视', '仰视', '侧面', '斜侧'] as const
 
@@ -12,6 +12,8 @@ export const PREFERRED_POSE_LINE_ORDER = [
 
 export const NSFW_POSE_SYSTEMS = new Set(['全身单人・性感系', '双人缠绵'])
 export const NSFW_COSTUME_CATEGORIES = new Set(['内衣・睡衣', '性感穿搭'])
+/** 本机 Codex 订阅网关的图片审核实测会直接拒绝泳装类参考图（与提示词无关），随机池需剔除以提高成功率 */
+export const GATEWAY_UNSAFE_COSTUME_CATEGORIES = new Set(['泳装・度假'])
 
 export function isNsfwPoseSystem(system: string): boolean {
   return NSFW_POSE_SYSTEMS.has(system)
@@ -28,6 +30,28 @@ export function isNsfwCostumeCategory(category: string): boolean {
 
 export function isNsfwCostume(item: CostumeItem): boolean {
   return NSFW_COSTUME_CATEGORIES.has(item.分类)
+}
+
+/** 订阅网关会因这类参考图触发 sexual 安全审核（实测：泳装分类 100% 拒绝） */
+export function isGatewayUnsafeCostume(item: CostumeItem): boolean {
+  return isNsfwCostume(item) || GATEWAY_UNSAFE_COSTUME_CATEGORIES.has(item.分类)
+}
+
+/**
+ * 本机 Codex 订阅网关的生成前校验：配方里是否包含高风险参考素材。
+ * 返回问题描述（如「服装「泳装・度假」」）；null 表示通过。
+ * 随机配方在选取后会调用它，不通过则自动再随机一次。
+ */
+export function codexGatewayRecipeIssue(recipe: RecipeState): string | null {
+  const costume = recipe.costume
+  if (costume && costume.source !== 'upload' && isGatewayUnsafeCostume(costume)) {
+    return `服装「${costume.分类}」`
+  }
+  const pose = recipe.pose
+  if (pose && pose.source !== 'upload' && isNsfwPoseSystem(pose.体系)) {
+    return `姿势「${pose.体系}」`
+  }
+  return null
 }
 
 export function buildPoseGroups(items: PoseItem[]): { items: PoseItem[]; groups: PoseGroup[]; lines: string[] } {

@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin, type UserConfig } from 'vite'
+import { codexGatewayPlugin } from './vite-plugins/codex-gateway.ts'
 
 const MIME: Record<string, string> = {
   '.json': 'application/json; charset=utf-8',
@@ -167,6 +168,7 @@ export default defineConfig(async (): Promise<UserConfig> => {
     publicDir: false,
     plugins: [
       localAssetsAndProxyPlugin(),
+      codexGatewayPlugin({ rootDir: import.meta.dirname }),
       tanstackRouter({ target: 'react', autoCodeSplitting: true }),
       react(),
       tailwindcss(),

@@ -1,11 +1,12 @@
 import type { ApiConfig, ImageProviderId, RecipeState } from '@/types/gallery'
+import { codexGatewayRecipeIssue } from '@/api/gallery'
 import { applyWorkflowOverrides, getWorkflowImages, validateReferenceCombinations, workflowIdentity, type ComfyObjectInfo } from '@/lib/comfyWorkflowParameters'
 import { poseImagePath } from '@/lib/recipeImages'
 import qwen2509ThreeImageWorkflow from '@/workflows/qwen_image_edit_2509_3img.api.json'
-import { getPromptProfile, type RecipePromptOptions } from './recipePrompt'
+import { getPromptProfile, isLocalCodexGateway, type RecipePromptOptions } from './recipePrompt'
 
 // 提示词构建逻辑已抽到独立的纯函数模块（便于 node 直接做快照/lint 回归测试）
-export { STYLE_PRESETS, buildRecipePrompt } from './recipePrompt'
+export { STYLE_PRESETS, buildRecipePrompt, isLocalCodexGateway } from './recipePrompt'
 export type { RecipePromptOptions } from './recipePrompt'
 
 export interface ProviderModelOption {
@@ -129,7 +130,14 @@ export function getFlexReferenceOrder(recipe: RecipeState): Array<'portrait' | '
 export function getRecipePromptOptions(config: ApiConfig, recipe: RecipeState): RecipePromptOptions {
   const freeFace = !recipe.portrait
   const profile = getPromptProfile(config)
-  if (config.activeProvider !== 'comfyui') return { freeFace, profile }
+  if (config.activeProvider !== 'comfyui')
+    return {
+      freeFace,
+      profile,
+      stitchedSheet: Boolean(config.sendStitchedSheet),
+      characterCount: config.characterCount ?? 1,
+      verbosity: config.promptVerbosity ?? 'concise',
+    }
   const cp = config.comfyuiParams
   if (isComfyFlexibleLayout(config, recipe)) {
     // 灵活参考：实际送图顺序由 getFlexReferenceOrder 决定，提示词按该顺序生成 <imageN> 标签
@@ -1567,6 +1575,17 @@ async function generateCharacterImageInner(params: {
     throw new Error(`请先配置 ${PROVIDER_META[provider].name} 的 API Key`)
   }
 
+  // 本机 Codex 订阅网关：生成前校验高风险参考素材（随机配方不通过会自动再随机一次），并使用中性提示词
+  const codexGateway = isLocalCodexGateway(config)
+  if (codexGateway) {
+    const issue = codexGatewayRecipeIssue(recipe)
+    if (issue) {
+      throw new Error(
+        `Codex 订阅网关无法生成：${issue} 属于订阅账号图片审核高风险素材（safety_violations=[sexual]）。请手动换掉该素材，或点「随机」自动换一套安全配方；也可改用官方 OpenAI API Key。`
+      )
+    }
+  }
+
   const rawSources = [
     recipe.portrait && (recipe.portrait.原图 || recipe.portrait.缩略图),
     recipe.costume && (recipe.costume.预览图 || recipe.costume.原图 || recipe.costume.缩略图),
@@ -1883,6 +1902,11 @@ async function generateCharacterImageInner(params: {
       json?.message ||
       json?.code ||
       `请求失败 (HTTP ${res.status})`
+    if (codexGateway && /safety_violations|rejected by the safety system/i.test(errMsg)) {
+      throw new Error(
+        '[GPT] 订阅账号的图片安全审核拒绝了本次生成（safety_violations=[sexual]）。常见原因：参考图或提示词含泳装 / 内衣 / 暴露 / 性暗示内容，订阅账号无法生成此类图片。建议：① 换用 SFW 日常服装 + 普通人像参考；② 关闭 18+ 素材模式；③ 或改用官方 OpenAI API Key。'
+      )
+    }
     throw new Error(`[${PROVIDER_META[provider].shortName}] ${errMsg}`)
   }
 
